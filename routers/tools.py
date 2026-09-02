@@ -88,8 +88,8 @@ async def set_schema(tool_id: str, schema: CustomToolSchemaCreate, user_id: str 
     if not conn.execute('SELECT id FROM tools WHERE id=? AND user_id=?', (tool_id, user_id)).fetchone():
         conn.close(); raise HTTPException(404, 'Tool not found')
     now = datetime.utcnow().isoformat()
-    conn.execute('''INSERT INTO custom_tool_schemas (id,tool_id,api_url,method,headers,request_body,response_body,
-        path_params,query_params,auth_type,auth_config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+    conn.execute('''INSERT OR REPLACE INTO custom_tool_schemas (id,tool_id,api_url,method,headers,request_body,response_body,
+        path_params,query_params,auth_type,auth_config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (str(uuid.uuid4()), tool_id, schema.api_url, schema.method, json.dumps(schema.headers),
          json.dumps(schema.request_body), json.dumps(schema.response_body), json.dumps(schema.path_params),
          json.dumps(schema.query_params), schema.auth_type, json.dumps(schema.auth_config), now, now))
