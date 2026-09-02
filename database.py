@@ -20,6 +20,7 @@ def init_db():
             system_prompt TEXT DEFAULT '', llm_provider TEXT DEFAULT 'openai', llm_model TEXT DEFAULT 'gpt-4o',
             temperature REAL DEFAULT 0.7, max_tokens INTEGER DEFAULT 4096, is_sub_agent INTEGER DEFAULT 0,
             parent_id TEXT, position_x REAL DEFAULT 0, position_y REAL DEFAULT 0,
+            orchestration_mode TEXT DEFAULT 'supervisor',
             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS agent_connections (
@@ -84,6 +85,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_llm_user ON llm_configs(user_id);
         CREATE INDEX IF NOT EXISTS idx_exec_user ON agent_executions(user_id);
     """)
+    agent_columns = {row["name"] for row in conn.execute("PRAGMA table_info(agents)")}
+    if "orchestration_mode" not in agent_columns:
+        conn.execute("ALTER TABLE agents ADD COLUMN orchestration_mode TEXT DEFAULT 'supervisor'")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(rag_documents)")}
     if "remote_path" not in columns:
         conn.execute("ALTER TABLE rag_documents ADD COLUMN remote_path TEXT DEFAULT ''")

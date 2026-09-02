@@ -14,6 +14,9 @@ class AgentCreate(BaseModel):
     parent_id: Optional[str] = None
     position_x: float = 0
     position_y: float = 0
+    # How this agent uses its connections: supervisor (the model picks),
+    # sequential, parallel, or conditional. See services/orchestrator.MODES.
+    orchestration_mode: str = "supervisor"
     # Optional key for llm_provider, saved to the user's provider keys rather
     # than onto the agent row, so agents sharing a provider share one key.
     api_key: Optional[str] = None
@@ -31,6 +34,7 @@ class AgentUpdate(BaseModel):
     parent_id: Optional[str] = None
     position_x: Optional[float] = None
     position_y: Optional[float] = None
+    orchestration_mode: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
 

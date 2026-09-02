@@ -55,7 +55,8 @@ async def get_graph(user_id: str = Depends(current_user_id)):
 # downloaded and often shared, and everything here is re-enterable.
 SECRET_KEYS = {'api_key', 'apikey', 'token', 'bot_token', 'webhook_url', 'password', 'secret', 'authorization'}
 AGENT_FIELDS = ('name', 'description', 'system_prompt', 'llm_provider', 'llm_model',
-                'temperature', 'max_tokens', 'is_sub_agent', 'position_x', 'position_y')
+                'temperature', 'max_tokens', 'is_sub_agent', 'position_x', 'position_y',
+                'orchestration_mode')
 
 
 def _strip_secrets(value):
@@ -137,13 +138,13 @@ async def import_graph(payload: dict, user_id: str = Depends(current_user_id)):
             continue
         aid = str(uuid.uuid4())
         conn.execute('''INSERT INTO agents (id,user_id,name,description,system_prompt,llm_provider,llm_model,
-            temperature,max_tokens,is_sub_agent,position_x,position_y,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            temperature,max_tokens,is_sub_agent,position_x,position_y,orchestration_mode,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (aid, user_id, str(entry.get('name'))[:200], entry.get('description') or '', entry.get('system_prompt') or '',
              entry.get('llm_provider') or 'openai', entry.get('llm_model') or 'gpt-4o',
              float(entry.get('temperature') or 0.7), int(entry.get('max_tokens') or 4096),
              int(bool(entry.get('is_sub_agent'))), float(entry.get('position_x') or 0), float(entry.get('position_y') or 0),
-             now, now))
+             entry.get('orchestration_mode') or 'supervisor', now, now))
         agent_ids.append(aid)
 
     for entry in payload.get('tools') or []:
@@ -192,10 +193,11 @@ async def create_agent(agent: AgentCreate, user_id: str = Depends(current_user_i
         save_user_api_key(user_id, agent.llm_provider, agent.api_key, agent.base_url or '')
     conn = get_db()
     conn.execute('''INSERT INTO agents (id,user_id,name,description,system_prompt,llm_provider,llm_model,
-        temperature,max_tokens,is_sub_agent,parent_id,position_x,position_y,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        temperature,max_tokens,is_sub_agent,parent_id,position_x,position_y,orchestration_mode,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (aid, user_id, agent.name, agent.description, agent.system_prompt, agent.llm_provider, agent.llm_model,
-         agent.temperature, agent.max_tokens, int(agent.is_sub_agent), agent.parent_id, agent.position_x, agent.position_y, now, now))
+         agent.temperature, agent.max_tokens, int(agent.is_sub_agent), agent.parent_id, agent.position_x, agent.position_y,
+         agent.orchestration_mode or 'supervisor', now, now))
     conn.commit()
     result = _row_to_agent(conn.execute('SELECT * FROM agents WHERE id=?', (aid,)).fetchone(), conn)
     conn.close()

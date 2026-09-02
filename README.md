@@ -62,6 +62,32 @@ cannot run; `has_api_key` on every agent response tells the UI whether the
 agent's provider is covered. Keys fall under the same 48-hour deletion as
 everything else.
 
+## Orchestration modes
+
+Each agent has an `orchestration_mode` deciding how it uses the agents connected
+to it. **In every mode except `supervisor`, the agent you chat with is the one
+that writes the final answer** - the mode only decides how its connected agents
+contribute first. That is deliberate: it means the direction you drew an arrow
+in never changes the outcome, which is what made direction-sensitive routing so
+confusing before.
+
+| Mode | Behaviour |
+|---|---|
+| `supervisor` (default) | Connected agents are offered to the model as `ask_<name>` tools and it decides which to call, if any. Flexible, not repeatable. |
+| `sequential` | Every connected agent runs in turn, each one shown what the previous ones answered, then this agent composes. Deterministic. |
+| `parallel` | All connected agents are asked concurrently, then this agent merges their answers. Best when the sub-questions are independent. |
+| `conditional` | Only connected agents whose condition matches the question run, then sequentially as above. |
+
+A connection's condition is its `condition_expr`, falling back to its `label` -
+so the single "when should this agent be consulted?" prompt in the UI serves
+both as the supervisor's routing hint and as the conditional rule. Conditions
+are matched in one classification call covering every edge, not one per edge,
+and an unusable reply falls open so a routing hiccup cannot leave the user with
+no answer.
+
+Modes apply to the agent you chat with. Agents it consults run in the ordinary
+supervisor way, which keeps a deep graph from multiplying out of control.
+
 ## Agent-to-agent delegation
 
 A connection drawn from agent A to agent B makes B available to A as a tool

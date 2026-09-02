@@ -4,12 +4,12 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
-import asyncio, re, time, uuid
+import asyncio, json, re, time, uuid
 from datetime import datetime
 from database import get_db
 from services.llm_provider import get_user_llm
 from services.tool_builder import get_agent_tools
-from services.tracing import RunTracer, QUESTION, ANSWER, ERROR
+from services.tracing import RunTracer, QUESTION, ANSWER, ERROR, REASONING, TOOL_CALL, TOOL_RESULT
 
 # How many earlier turns of a conversation are replayed to the agent. Bounded so
 # a long chat cannot grow the prompt without limit.
@@ -113,7 +113,7 @@ def _delegate_tool(user_id, target, depth, chain, trace):
     )
 
 
-def build_agent_graph(user_id, agent_id, depth=0, chain=(), trace=None):
+def build_agent_graph(user_id, agent_id, depth=0, chain=(), trace=None, with_delegates=True):
     conn = get_db()
     agent = conn.execute('SELECT * FROM agents WHERE id=? AND user_id=?', (agent_id, user_id)).fetchone()
     conn.close()
@@ -125,7 +125,7 @@ def build_agent_graph(user_id, agent_id, depth=0, chain=(), trace=None):
     # Each connected agent becomes a tool, so the model itself decides which
     # one to consult and can combine several answers into its reply.
     delegates = []
-    if depth < MAX_DELEGATION_DEPTH:
+    if with_delegates and depth < MAX_DELEGATION_DEPTH:
         chain = chain or (agent_id,)
         trace = trace if trace is not None else Trace()
         delegates = [target for target in _connected_agents(user_id, agent_id) if target['id'] not in chain]
@@ -168,6 +168,114 @@ def build_agent_graph(user_id, agent_id, depth=0, chain=(), trace=None):
     }})
 
 
+# ── Orchestration modes ─────────────────────────────────────────────────────
+#
+# In every mode except `supervisor` the agent you chat with is the one that
+# answers you; the mode only decides how its connected agents contribute first.
+# That keeps the arrow direction from mattering - drawing A -> C or C -> A gives
+# the same result - which is what made the earlier direction-sensitive
+# behaviour so confusing.
+MODES = ('supervisor', 'sequential', 'parallel', 'conditional')
+
+
+async def _ask_peer(user_id, peer, question, depth, chain, trace, tracer):
+    """Run one connected agent as its own graph and return its answer."""
+    trace.add({'agent': peer['name'], 'role': 'request', 'text': question})
+    if tracer:
+        tracer.add(TOOL_CALL, name=f"ask_{peer['name']}", content=question,
+                   agent={'name': peer['name'], 'id': peer['id']}, depth=depth + 1,
+                   data={'delegation': True, 'mode_driven': True})
+    started = time.time()
+    try:
+        graph = build_agent_graph(user_id, peer['id'], depth + 1, chain + (peer['id'],), trace)
+        result = await graph.ainvoke({'messages': [HumanMessage(content=question)]})
+        answer = _final_text(result) or 'The agent returned no answer.'
+    except Exception as error:
+        answer = f'{peer["name"]} could not answer: {error}'
+    trace.add({'agent': peer['name'], 'role': 'response', 'text': answer})
+    if tracer:
+        tracer.add(TOOL_RESULT, name=f"ask_{peer['name']}", content=answer,
+                   agent={'name': peer['name'], 'id': peer['id']}, depth=depth + 1,
+                   duration_ms=int((time.time() - started) * 1000), data={'delegation': True})
+    return answer
+
+
+async def _matching_peers(llm, question, peers, tracer):
+    """Conditional routing: keep the peers whose condition fits the question.
+
+    One classification call covers every edge rather than one per edge, and an
+    unusable reply falls open (everyone contributes) so a routing hiccup cannot
+    leave the user with no answer at all.
+    """
+    conditioned = [p for p in peers if (p.get('condition') or p.get('label'))]
+    unconditional = [p for p in peers if p not in conditioned]
+    if not conditioned:
+        return peers, 'no conditions set - every connected agent contributed'
+
+    listing = '\n'.join(f"{i}. {p['name']}: {p.get('condition') or p.get('label')}"
+                        for i, p in enumerate(conditioned))
+    prompt = (
+        'Decide which of these agents are relevant to the question. '
+        'Reply with ONLY a JSON array of the matching numbers, e.g. [0,2]. '
+        'Reply [] if none are relevant.\n\n'
+        f'Question: {question}\n\nAgents:\n{listing}'
+    )
+    try:
+        reply = await llm.ainvoke([HumanMessage(content=prompt)])
+        text = reply.content if isinstance(reply.content, str) else str(reply.content)
+        picked = json.loads(re.search(r'\[.*?\]', text, re.S).group(0))
+        chosen = [conditioned[i] for i in picked if isinstance(i, int) and 0 <= i < len(conditioned)]
+        note = f"matched {[c['name'] for c in chosen]}" if chosen else 'no condition matched'
+    except Exception as error:
+        chosen, note = conditioned, f'condition check failed ({error}); all conditional agents contributed'
+    if tracer:
+        tracer.add(REASONING, name='conditional routing', content=note,
+                   data={'chose': [c['name'] for c in chosen], 'considered': [c['name'] for c in conditioned]})
+    return unconditional + chosen, note
+
+
+async def gather_contributions(mode, user_id, agent_id, agent_name, llm, question, peers, trace, tracer):
+    """Run the connected agents according to the mode and return their answers."""
+    chain = (agent_id,)
+    note = ''
+
+    if mode == 'conditional':
+        peers, note = await _matching_peers(llm, question, peers, tracer)
+
+    contributions = []
+    if mode == 'parallel':
+        # Independent sub-questions, so ask everyone at once rather than paying
+        # for each round trip in series.
+        answers = await asyncio.gather(*[
+            _ask_peer(user_id, peer, question, 0, chain, trace, tracer) for peer in peers
+        ], return_exceptions=True)
+        for peer, answer in zip(peers, answers):
+            contributions.append((peer['name'], f'{answer}' if not isinstance(answer, Exception) else f'failed: {answer}'))
+    else:
+        # sequential / conditional: each agent sees what the previous ones said,
+        # so later agents can build on earlier work.
+        transcript = ''
+        for peer in peers:
+            prompt = question if not transcript else (
+                f'{question}\n\nWhat other agents have established so far:\n{transcript}')
+            answer = await _ask_peer(user_id, peer, prompt, 0, chain, trace, tracer)
+            contributions.append((peer['name'], answer))
+            transcript += f'\n[{peer["name"]}]: {answer}\n'
+    return contributions, note
+
+
+def compose_prompt(question, contributions, mode):
+    joined = '\n\n'.join(f'[{name}]\n{answer}' for name, answer in contributions)
+    return (
+        f'{question}\n\n'
+        f'--- Answers gathered from your connected agents ({mode} orchestration) ---\n'
+        f'{joined}\n'
+        '--- end ---\n\n'
+        'Using those answers, give the user one clear final response. '
+        'Do not mention this process or that other agents were involved.'
+    )
+
+
 def load_history(user_id, conversation_id):
     """Earlier turns of this conversation, oldest first, as LangChain messages."""
     if not conversation_id:
@@ -200,6 +308,41 @@ def save_turn(user_id, conversation_id, agent_id, question, answer):
     conn.commit(); conn.close()
 
 
+async def orchestrate(user_id, agent_id, message, trace, tracer):
+    """Apply the agent's orchestration mode before it answers.
+
+    Returns the question to actually put to the agent, and whether its
+    connected agents should still be offered to it as tools. Modes apply to the
+    agent you chat with; agents it consults run in the ordinary supervisor way,
+    which keeps a deep graph from multiplying out of control.
+    """
+    conn = get_db()
+    row = conn.execute('SELECT name, orchestration_mode, llm_provider, llm_model, temperature, max_tokens '
+                       'FROM agents WHERE id=? AND user_id=?', (agent_id, user_id)).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError(f'Agent {agent_id} not found')
+    mode = (row['orchestration_mode'] or 'supervisor').lower()
+    if mode not in MODES:
+        mode = 'supervisor'
+    peers = _connected_agents(user_id, agent_id) if mode != 'supervisor' else []
+    if mode == 'supervisor' or not peers:
+        return message, True, mode
+
+    llm = get_user_llm(user_id, row['llm_provider'], row['llm_model'], row['temperature'], row['max_tokens'])
+    if not llm:
+        raise ValueError(f"No API key for {row['llm_provider']}. Add it on the agent or in Settings.")
+    if tracer:
+        tracer.add(REASONING, name=f'{mode} orchestration',
+                   content=f"Running {len(peers)} connected agent(s) in {mode} mode before answering.",
+                   agent={'name': row['name'], 'id': agent_id},
+                   data={'chose': [p['name'] for p in peers], 'mode': mode})
+    contributions, _ = await gather_contributions(mode, user_id, agent_id, row['name'], llm, message, peers, trace, tracer)
+    if not contributions:
+        return message, False, mode
+    return compose_prompt(message, contributions, mode), False, mode
+
+
 def _start_execution(user_id, agent_id, message):
     eid = str(uuid.uuid4())
     conn = get_db()
@@ -227,9 +370,10 @@ async def execute_agent(user_id, agent_id, message, conversation_id=None):
     tracer = RunTracer(eid, user_id)
     tracer.add(QUESTION, content=message)
     try:
-        graph = build_agent_graph(user_id, agent_id, trace=trace)
+        question, with_delegates, mode = await orchestrate(user_id, agent_id, message, trace, tracer)
+        graph = build_agent_graph(user_id, agent_id, trace=trace, with_delegates=with_delegates)
         history = load_history(user_id, conversation_id)
-        result = await graph.ainvoke({'messages': history + [HumanMessage(content=message)]},
+        result = await graph.ainvoke({'messages': history + [HumanMessage(content=question)]},
                                      config={'callbacks': [tracer]})
         output = _final_text(result)
         dur = int((time.time() - t0) * 1000)
@@ -238,7 +382,7 @@ async def execute_agent(user_id, agent_id, message, conversation_id=None):
         _finish_execution(eid, output, dur, tokens=tracer.tokens_in + tracer.tokens_out)
         save_turn(user_id, conversation_id, agent_id, message, output)
         return {'execution_id': eid, 'status': 'completed', 'output': output, 'duration_ms': dur,
-                'delegations': list(trace), 'tokens': tracer.tokens_in + tracer.tokens_out}
+                'delegations': list(trace), 'tokens': tracer.tokens_in + tracer.tokens_out, 'mode': mode}
     except Exception as e:
         dur = int((time.time() - t0) * 1000)
         tracer.add(ERROR, content=str(e), duration_ms=dur)
@@ -258,11 +402,29 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
     tracer.add(QUESTION, content=message)
     yield {'type': 'start', 'execution_id': eid}
 
+    # The orchestration step runs before the answering model starts, so drain
+    # its trace events as they happen rather than making the user wait blind.
+    orchestration = asyncio.create_task(orchestrate(user_id, agent_id, message, trace, tracer))
+    getter = asyncio.create_task(queue.get())
+    while True:
+        done, _ = await asyncio.wait({getter, orchestration}, return_when=asyncio.FIRST_COMPLETED)
+        if getter in done:
+            yield getter.result()
+            getter = asyncio.create_task(queue.get())
+            continue
+        getter.cancel()  # nothing was taken from the queue, so nothing is lost
+        while not queue.empty():
+            yield queue.get_nowait()
+        break
+
     try:
-        graph = build_agent_graph(user_id, agent_id, trace=trace)
+        question, with_delegates, mode = orchestration.result()
+        graph = build_agent_graph(user_id, agent_id, trace=trace, with_delegates=with_delegates)
         history = load_history(user_id, conversation_id)
     except Exception as error:
         tracer.add(ERROR, content=str(error))
+        while not queue.empty():
+            yield queue.get_nowait()
         tracer.flush()
         _finish_execution(eid, '', int((time.time() - t0) * 1000), error=str(error))
         yield {'type': 'error', 'error': str(error)}
@@ -322,4 +484,4 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
     _finish_execution(eid, output, dur, tokens=tokens)
     save_turn(user_id, conversation_id, agent_id, message, output)
     yield {'type': 'done', 'execution_id': eid, 'output': output, 'duration_ms': dur,
-           'delegations': list(trace), 'tokens': tokens}
+           'delegations': list(trace), 'tokens': tokens, 'mode': mode}
