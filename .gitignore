@@ -8,3 +8,5 @@ uploads/*
 !uploads/.gitkeep
 *.log
 *.pid
+
+.vercel
