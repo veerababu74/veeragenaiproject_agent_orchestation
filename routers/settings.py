@@ -34,7 +34,7 @@ async def create_config(cfg: LlmConfigCreate, user_id: str = Depends(current_use
                       (cfg.api_key, cfg.base_url, mj, now, ex['id'])); cid = ex['id']
     else:
         cid = str(uuid.uuid4())
-        conn.execute('INSERT INTO llm_configs (id,user_id,provider,api_key,base_url,models,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        conn.execute('INSERT INTO llm_configs (id,user_id,provider,api_key,base_url,models,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
                       (cid, user_id, cfg.provider, cfg.api_key, cfg.base_url, mj, 1, now, now))
     conn.commit()
     r = dict(conn.execute('SELECT * FROM llm_configs WHERE id=?', (cid,)).fetchone())
