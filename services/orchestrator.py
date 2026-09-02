@@ -59,16 +59,33 @@ def _final_text(result):
 
 
 def _connected_agents(user_id, agent_id):
-    """Agents this one may delegate to: the targets of its outgoing edges."""
+    """Agents this one may consult: everything directly connected to it.
+
+    Direction is deliberately ignored. People draw these graphs both ways -
+    arrows flowing *into* the agent they intend to chat with is just as natural
+    as out of it - and following only outgoing edges left the final agent in a
+    chain with nobody to ask. A link means "these two can talk"; the cycle guard
+    in build_agent_graph is what stops A -> B -> A.
+    """
     conn = get_db()
     rows = conn.execute(
         '''SELECT a.id, a.name, a.description, c.label
-           FROM agent_connections c JOIN agents a ON a.id = c.target_agent_id
-           WHERE c.source_agent_id = ? AND c.user_id = ? AND a.user_id = ?''',
-        (agent_id, user_id, user_id),
+           FROM agent_connections c
+           JOIN agents a ON a.id = CASE WHEN c.source_agent_id = :aid
+                                        THEN c.target_agent_id ELSE c.source_agent_id END
+           WHERE (c.source_agent_id = :aid OR c.target_agent_id = :aid)
+             AND c.user_id = :uid AND a.user_id = :uid AND a.id != :aid''',
+        {'aid': agent_id, 'uid': user_id},
     ).fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    # Two agents can be linked more than once; each should appear as one tool.
+    unique = {}
+    for row in rows:
+        entry = dict(row)
+        existing = unique.get(entry['id'])
+        if existing is None or (not existing.get('label') and entry.get('label')):
+            unique[entry['id']] = entry
+    return list(unique.values())
 
 
 def _delegate_tool(user_id, target, depth, chain, trace):

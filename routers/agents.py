@@ -32,6 +32,19 @@ async def list_agents(user_id: str = Depends(current_user_id)):
 async def get_graph(user_id: str = Depends(current_user_id)):
     conn = get_db()
     agents = [dict(r) for r in conn.execute('SELECT * FROM agents WHERE user_id=?', (user_id,)).fetchall()]
+    # Attach each agent's tools and key status in one pass - the graph nodes
+    # show tool badges, and the UI warns when a provider has no key.
+    tools_by_agent = {}
+    for row in conn.execute(
+        '''SELECT ta.agent_id, t.id, t.name, t.description, t.tool_type
+           FROM tool_assignments ta JOIN tools t ON t.id = ta.tool_id WHERE t.user_id=?''', (user_id,)):
+        entry = dict(row)
+        tools_by_agent.setdefault(entry.pop('agent_id'), []).append(entry)
+    keyed = {r['provider'] for r in conn.execute(
+        'SELECT provider FROM llm_configs WHERE user_id=? AND is_active=1', (user_id,))}
+    for agent in agents:
+        agent['tools'] = tools_by_agent.get(agent['id'], [])
+        agent['has_api_key'] = agent['llm_provider'] in keyed
     conns = []
     for r in conn.execute('SELECT * FROM agent_connections WHERE user_id=?', (user_id,)).fetchall():
         c = dict(r); c['condition'] = c.pop('condition_expr',''); conns.append(c)
