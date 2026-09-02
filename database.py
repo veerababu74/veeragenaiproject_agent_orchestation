@@ -63,6 +63,12 @@ def init_db():
             duration_ms INTEGER DEFAULT 0, tokens_used INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_convmsg ON conversation_messages(user_id, conversation_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(user_id);
         CREATE INDEX IF NOT EXISTS idx_connections_user ON agent_connections(user_id);
         CREATE INDEX IF NOT EXISTS idx_tools_user ON tools(user_id);
@@ -102,6 +108,7 @@ def cleanup_expired_data():
                         pass
 
     conn = get_db()
+    conn.execute("DELETE FROM conversation_messages WHERE created_at < datetime('now', '-48 hours')")
     conn.execute("DELETE FROM agent_executions WHERE created_at < datetime('now', '-48 hours')")
     conn.execute("DELETE FROM rag_documents WHERE created_at < datetime('now', '-48 hours')")
     conn.execute("DELETE FROM tool_assignments WHERE created_at < datetime('now', '-48 hours')")

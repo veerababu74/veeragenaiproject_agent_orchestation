@@ -38,6 +38,140 @@ async def get_graph(user_id: str = Depends(current_user_id)):
     conn.close()
     return {'agents': agents, 'connections': conns}
 
+# Anything that could be a credential is stripped on export: the file is
+# downloaded and often shared, and everything here is re-enterable.
+SECRET_KEYS = {'api_key', 'apikey', 'token', 'bot_token', 'webhook_url', 'password', 'secret', 'authorization'}
+AGENT_FIELDS = ('name', 'description', 'system_prompt', 'llm_provider', 'llm_model',
+                'temperature', 'max_tokens', 'is_sub_agent', 'position_x', 'position_y')
+
+
+def _strip_secrets(value):
+    if isinstance(value, dict):
+        return {k: ('' if k.lower() in SECRET_KEYS else _strip_secrets(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_secrets(v) for v in value]
+    return value
+
+
+def _loads(value, fallback):
+    if isinstance(value, str):
+        try: return json.loads(value)
+        except ValueError: return fallback
+    return value if value is not None else fallback
+
+
+@router.get('/export')
+async def export_graph(user_id: str = Depends(current_user_id)):
+    """The whole workspace as portable JSON. Agents and tools are referenced by
+    index rather than id so an import can create fresh rows."""
+    conn = get_db()
+    agent_rows = conn.execute('SELECT * FROM agents WHERE user_id=? ORDER BY created_at', (user_id,)).fetchall()
+    agent_index = {row['id']: position for position, row in enumerate(agent_rows)}
+    tool_rows = conn.execute('SELECT * FROM tools WHERE user_id=? ORDER BY created_at', (user_id,)).fetchall()
+    tool_index = {row['id']: position for position, row in enumerate(tool_rows)}
+
+    tools = []
+    for row in tool_rows:
+        entry = {'name': row['name'], 'description': row['description'], 'tool_type': row['tool_type'],
+                 'is_builtin': bool(row['is_builtin']), 'config': _strip_secrets(_loads(row['config'], {}))}
+        schema = conn.execute('SELECT * FROM custom_tool_schemas WHERE tool_id=?', (row['id'],)).fetchone()
+        if schema:
+            entry['custom_schema'] = {
+                'api_url': schema['api_url'], 'method': schema['method'],
+                'headers': _strip_secrets(_loads(schema['headers'], {})),
+                'request_body': _loads(schema['request_body'], {}),
+                'response_body': _loads(schema['response_body'], {}),
+                'path_params': _loads(schema['path_params'], []),
+                'query_params': _loads(schema['query_params'], []),
+                'auth_type': schema['auth_type'],
+                'auth_config': _strip_secrets(_loads(schema['auth_config'], {})),
+            }
+        tools.append(entry)
+
+    connections = [{'source': agent_index[r['source_agent_id']], 'target': agent_index[r['target_agent_id']],
+                    'label': r['label'], 'condition': r['condition_expr']}
+                   for r in conn.execute('SELECT * FROM agent_connections WHERE user_id=?', (user_id,)).fetchall()
+                   if r['source_agent_id'] in agent_index and r['target_agent_id'] in agent_index]
+
+    assignments = [{'agent': agent_index[r['agent_id']], 'tool': tool_index[r['tool_id']]}
+                   for r in conn.execute(
+                       '''SELECT ta.agent_id, ta.tool_id FROM tool_assignments ta
+                          JOIN agents a ON a.id = ta.agent_id WHERE a.user_id=?''', (user_id,)).fetchall()
+                   if r['agent_id'] in agent_index and r['tool_id'] in tool_index]
+    conn.close()
+
+    return {
+        'version': 1,
+        'exported_at': datetime.utcnow().isoformat(),
+        'note': 'API keys and other credentials are not included and must be re-entered after import.',
+        'agents': [{field: dict(row)[field] for field in AGENT_FIELDS} for row in agent_rows],
+        'connections': connections, 'tools': tools, 'assignments': assignments,
+    }
+
+
+@router.post('/import')
+async def import_graph(payload: dict, user_id: str = Depends(current_user_id)):
+    """Recreate an exported workspace alongside whatever is already there."""
+    agents = payload.get('agents') or []
+    if not isinstance(agents, list):
+        raise HTTPException(400, 'Invalid file: "agents" must be a list')
+    now = datetime.utcnow().isoformat()
+    conn = get_db()
+    agent_ids, tool_ids = [], []
+
+    for entry in agents:
+        if not isinstance(entry, dict) or not entry.get('name'):
+            continue
+        aid = str(uuid.uuid4())
+        conn.execute('''INSERT INTO agents (id,user_id,name,description,system_prompt,llm_provider,llm_model,
+            temperature,max_tokens,is_sub_agent,position_x,position_y,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (aid, user_id, str(entry.get('name'))[:200], entry.get('description') or '', entry.get('system_prompt') or '',
+             entry.get('llm_provider') or 'openai', entry.get('llm_model') or 'gpt-4o',
+             float(entry.get('temperature') or 0.7), int(entry.get('max_tokens') or 4096),
+             int(bool(entry.get('is_sub_agent'))), float(entry.get('position_x') or 0), float(entry.get('position_y') or 0),
+             now, now))
+        agent_ids.append(aid)
+
+    for entry in payload.get('tools') or []:
+        if not isinstance(entry, dict) or not entry.get('name'):
+            continue
+        tid = str(uuid.uuid4())
+        conn.execute('INSERT INTO tools (id,user_id,name,description,tool_type,is_builtin,config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                     (tid, user_id, str(entry.get('name'))[:200], entry.get('description') or '',
+                      entry.get('tool_type') or 'custom', int(bool(entry.get('is_builtin'))),
+                      json.dumps(entry.get('config') or {}), now, now))
+        tool_ids.append(tid)
+        schema = entry.get('custom_schema')
+        if isinstance(schema, dict) and schema.get('api_url'):
+            conn.execute('''INSERT OR REPLACE INTO custom_tool_schemas (id,tool_id,api_url,method,headers,request_body,
+                response_body,path_params,query_params,auth_type,auth_config,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (str(uuid.uuid4()), tid, schema['api_url'], schema.get('method') or 'POST',
+                 json.dumps(schema.get('headers') or {}), json.dumps(schema.get('request_body') or {}),
+                 json.dumps(schema.get('response_body') or {}), json.dumps(schema.get('path_params') or []),
+                 json.dumps(schema.get('query_params') or []), schema.get('auth_type') or 'none',
+                 json.dumps(schema.get('auth_config') or {}), now, now))
+
+    def _ref(ids, index):
+        return ids[index] if isinstance(index, int) and 0 <= index < len(ids) else None
+
+    for entry in payload.get('connections') or []:
+        source, target = _ref(agent_ids, (entry or {}).get('source')), _ref(agent_ids, (entry or {}).get('target'))
+        if source and target and source != target:
+            conn.execute('INSERT INTO agent_connections (id,user_id,source_agent_id,target_agent_id,label,condition_expr,created_at) VALUES (?,?,?,?,?,?,?)',
+                         (str(uuid.uuid4()), user_id, source, target, entry.get('label') or '', entry.get('condition') or '', now))
+
+    for entry in payload.get('assignments') or []:
+        agent_ref, tool_ref = _ref(agent_ids, (entry or {}).get('agent')), _ref(tool_ids, (entry or {}).get('tool'))
+        if agent_ref and tool_ref:
+            conn.execute('INSERT OR IGNORE INTO tool_assignments (id,agent_id,tool_id,created_at) VALUES (?,?,?,?)',
+                         (str(uuid.uuid4()), agent_ref, tool_ref, now))
+
+    conn.commit(); conn.close()
+    return {'imported': True, 'agents': len(agent_ids), 'tools': len(tool_ids)}
+
+
 @router.post('')
 async def create_agent(agent: AgentCreate, user_id: str = Depends(current_user_id)):
     aid = str(uuid.uuid4()); now = datetime.utcnow().isoformat()
@@ -111,6 +245,22 @@ async def create_connection(c: ConnectionCreate, user_id: str = Depends(current_
     result['condition'] = result.pop('condition_expr','')
     conn.close()
     return result
+
+@router.put('/connections/{cid}')
+async def update_connection(cid: str, body: dict, user_id: str = Depends(current_user_id)):
+    """The label tells the source agent when to consult this target, so it ends
+    up in the delegate tool's description."""
+    conn = get_db()
+    if not conn.execute('SELECT id FROM agent_connections WHERE id=? AND user_id=?', (cid, user_id)).fetchone():
+        conn.close(); raise HTTPException(404, 'Connection not found')
+    conn.execute('UPDATE agent_connections SET label=?, condition_expr=? WHERE id=? AND user_id=?',
+                 (str(body.get('label') or '')[:200], str(body.get('condition') or '')[:500], cid, user_id))
+    conn.commit()
+    result = dict(conn.execute('SELECT * FROM agent_connections WHERE id=?', (cid,)).fetchone())
+    result['condition'] = result.pop('condition_expr', '')
+    conn.close()
+    return result
+
 
 @router.delete('/connections/{cid}')
 async def delete_connection(cid: str, user_id: str = Depends(current_user_id)):

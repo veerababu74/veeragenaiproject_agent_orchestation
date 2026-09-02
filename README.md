@@ -74,6 +74,35 @@ hops one question may take, and the `chain` of already-visited agents is
 filtered out of each delegate's options, so A -> B -> A cannot recurse. Every
 hop is recorded and returned as `delegations` on the execute response.
 
+## Conversation memory
+
+`POST /execute` and `POST /execute/stream` accept a `conversation_id`. When one
+is given, the last `HISTORY_LIMIT` turns of that thread are replayed to the
+agent and the new turn is appended, so the agent remembers earlier messages.
+Omit it for a one-shot run that stores nothing. History is scoped per user and
+per conversation, is deleted by the same 48-hour sweep, and a failed run is not
+recorded. `GET`/`DELETE /execute/conversations/{id}` read and clear a thread.
+
+## Streaming
+
+`POST /execute/stream` returns server-sent events, each a JSON object with a
+`type`: `start`, `token` (a chunk of the reply), `delegation` (a question sent
+to a connected agent, or its answer), then `done` or `error`. Only the agent
+being chatted with streams tokens - it is tagged `primary_agent` so the models
+of agents it delegates to, which run their own graphs underneath, do not
+interleave. Delegation steps are pushed onto a queue by the tool as they
+happen, so the client sees which agent is being consulted mid-run.
+
+## Export and import
+
+`GET /agents/export` returns the whole workspace - agents, connections, tools,
+custom schemas and tool assignments - as JSON, referencing agents and tools by
+index so `POST /agents/import` can recreate them with fresh ids. Because
+everything is deleted after 48 hours, this is how a workspace survives.
+**Credentials are stripped on export** (anything keyed `api_key`, `token`,
+`webhook_url`, `password`, and friends) since the file is downloaded and often
+shared; they must be re-entered after importing.
+
 ## Built-in tools
 
 `services/builtin_tools.py` holds the catalogue served by `GET /tools/builtin`
