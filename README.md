@@ -13,7 +13,8 @@ service alongside the other veeragenai backends.
 - `database.py` - SQLite connection + schema (single shared DB across features)
 - `models.py` - Pydantic request/response models
 - `routers/` - one router per feature: `agents`, `tools`, `rag`, `execute`, `settings`
-- `services/` - `llm_provider`, `orchestrator` (LangGraph agent graph), `tool_builder`
+- `services/` - `llm_provider`, `orchestrator` (LangGraph agent graph), `tool_builder`,
+  `builtin_tools` (the built-in tool catalogue and its implementations)
 - `rag_storage.py` - Hugging Face bucket wrapper for original uploaded files
 - `rag_vector_store.py` - Pinecone wrapper for chunk embeddings
 
@@ -49,6 +50,39 @@ When a document (or any other user data) passes the 48-hour retention window,
 `database.cleanup_expired_data()` deletes its Pinecone vectors and Hugging
 Face file *before* dropping the SQLite row, mirroring veeragenai's
 `retention.py` ordering so nothing is orphaned in either store.
+
+## Provider API keys
+
+Keys are stored per user *per provider* in `llm_configs`, not per agent, so every
+agent on the same provider shares one key. They can be entered in two places
+that write the same record: Settings, or the API Key field on the agent form
+(`api_key` on `POST /agents` and `PUT /agents/{id}`). Because an agent picks its
+provider at creation time, entering the key there avoids creating an agent that
+cannot run; `has_api_key` on every agent response tells the UI whether the
+agent's provider is covered. Keys fall under the same 48-hour deletion as
+everything else.
+
+## Agent-to-agent delegation
+
+A connection drawn from agent A to agent B makes B available to A as a tool
+named `ask_<b_name>`. A's model decides which connected agents to consult, may
+consult several, and composes their answers into its reply - so you chat with
+one agent and get one answer back. `services/orchestrator.py` builds the target
+agent's own graph on demand, meaning a delegate brings its own tools, prompt and
+provider. Two guards keep this bounded: `MAX_DELEGATION_DEPTH` caps how many
+hops one question may take, and the `chain` of already-visited agents is
+filtered out of each delegate's options, so A -> B -> A cannot recurse. Every
+hop is recorded and returned as `delegations` on the execute response.
+
+## Built-in tools
+
+`services/builtin_tools.py` holds the catalogue served by `GET /tools/builtin`
+and the factory for each entry. Every tool is a plain REST call made with
+aiohttp rather than a provider SDK, so adding one adds no dependency. A tool
+whose required config is missing returns `None` from its factory and is simply
+not given to the agent. Currently: date/time, calculator, Slack, Tavily,
+Google (Serper), web page reader, generic HTTP request, GitHub, DuckDuckGo
+and RAG search.
 
 ## Shared authentication
 

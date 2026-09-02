@@ -33,13 +33,17 @@ async def list_tools(user_id: str = Depends(current_user_id), tool_type: str = N
 
 @router.get('/builtin')
 async def list_builtin():
-    return [
-        {'type':'tavily','name':'Tavily Search','description':'AI-optimized search','config_fields':['api_key','max_results']},
-        {'type':'google_search','name':'Google Search (Serper)','description':'Google via Serper API','config_fields':['api_key','max_results']},
-        {'type':'duckduckgo','name':'DuckDuckGo Search','description':'Free web search','config_fields':[]},
-        {'type':'github','name':'GitHub Actions','description':'GitHub repo interaction','config_fields':['api_key','repo','branch','action']},
-        {'type':'rag','name':'RAG Document Search','description':'Search this user\'s uploaded documents (Hugging Face + Pinecone, managed automatically)','config_fields':['top_k']},
+    from services.builtin_tools import BUILTIN_TOOLS
+    catalogue = [
+        {'type':'duckduckgo','name':'DuckDuckGo Search','description':'Free web search, no API key needed','config_fields':[],'requires':[]},
+        {'type':'rag','name':'RAG Document Search','description':'Search this user\'s uploaded documents (Hugging Face + Pinecone, managed automatically)','config_fields':['top_k'],'requires':[]},
     ]
+    catalogue += [
+        {'type': tool_type, 'name': entry['name'], 'description': entry['description'],
+         'config_fields': entry['config_fields'], 'requires': entry['requires']}
+        for tool_type, entry in BUILTIN_TOOLS.items()
+    ]
+    return catalogue
 
 @router.post('')
 async def create_tool(tool: ToolCreate, user_id: str = Depends(current_user_id)):

@@ -82,7 +82,8 @@ def create_builtin_tool(tool_type, config, user_id):
         except: return None
     if tool_type == 'rag':
         return create_rag_tool(user_id, config)
-    return None
+    from services.builtin_tools import create_builtin
+    return create_builtin(tool_type, config)
 
 def get_agent_tools(user_id, agent_id):
     from database import get_db

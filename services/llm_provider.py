@@ -47,3 +47,27 @@ def get_user_api_key(user_id, provider):
     row = conn.execute('SELECT api_key FROM llm_configs WHERE user_id=? AND provider=? AND is_active=1 LIMIT 1', (user_id, provider)).fetchone()
     conn.close()
     return row['api_key'] if row else None
+
+def save_user_api_key(user_id, provider, api_key, base_url=''):
+    """Upsert one provider key for a user. Shared by Settings and the agent
+    form so a key entered while creating an agent is the same record Settings
+    lists, and is swept by the same 48-hour retention rule."""
+    from database import get_db
+    import json, uuid
+    from datetime import datetime
+    api_key = (api_key or '').strip()
+    if not api_key:
+        return None
+    now = datetime.utcnow().isoformat()
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM llm_configs WHERE user_id=? AND provider=?', (user_id, provider)).fetchone()
+    if existing:
+        cid = existing['id']
+        conn.execute('UPDATE llm_configs SET api_key=?,base_url=?,is_active=1,updated_at=? WHERE id=?',
+                     (api_key, base_url, now, cid))
+    else:
+        cid = str(uuid.uuid4())
+        conn.execute('INSERT INTO llm_configs (id,user_id,provider,api_key,base_url,models,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                     (cid, user_id, provider, api_key, base_url, json.dumps([]), 1, now, now))
+    conn.commit(); conn.close()
+    return cid

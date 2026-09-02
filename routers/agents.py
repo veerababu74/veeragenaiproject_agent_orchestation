@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from models import AgentCreate, AgentUpdate, ConnectionCreate
 from database import get_db
 from auth import current_user_id
+from services.llm_provider import save_user_api_key
 import json, uuid
 from datetime import datetime
 
@@ -14,6 +15,9 @@ def _row_to_agent(row, conn):
     a['tools'] = [dict(r) for r in cur.fetchall()]
     cur.execute('SELECT id,source_agent_id,target_agent_id,label,condition_expr,created_at FROM agent_connections WHERE (source_agent_id=? OR target_agent_id=?) AND user_id=?', (a['id'],a['id'],a['user_id']))
     a['connections'] = [dict(r) for r in cur.fetchall()]
+    # Lets the UI warn before run time that this agent's provider has no key.
+    cur.execute('SELECT 1 FROM llm_configs WHERE user_id=? AND provider=? AND is_active=1 LIMIT 1', (a['user_id'], a['llm_provider']))
+    a['has_api_key'] = cur.fetchone() is not None
     return a
 
 @router.get('')
@@ -37,6 +41,8 @@ async def get_graph(user_id: str = Depends(current_user_id)):
 @router.post('')
 async def create_agent(agent: AgentCreate, user_id: str = Depends(current_user_id)):
     aid = str(uuid.uuid4()); now = datetime.utcnow().isoformat()
+    if agent.api_key:
+        save_user_api_key(user_id, agent.llm_provider, agent.api_key, agent.base_url or '')
     conn = get_db()
     conn.execute('''INSERT INTO agents (id,user_id,name,description,system_prompt,llm_provider,llm_model,
         temperature,max_tokens,is_sub_agent,parent_id,position_x,position_y,created_at,updated_at)
@@ -60,10 +66,17 @@ async def get_agent(agent_id: str, user_id: str = Depends(current_user_id)):
 @router.put('/{agent_id}')
 async def update_agent(agent_id: str, agent: AgentUpdate, user_id: str = Depends(current_user_id)):
     conn = get_db()
-    if not conn.execute('SELECT id FROM agents WHERE id=? AND user_id=?', (agent_id, user_id)).fetchone():
+    existing = conn.execute('SELECT llm_provider FROM agents WHERE id=? AND user_id=?', (agent_id, user_id)).fetchone()
+    if not existing:
         conn.close(); raise HTTPException(404, 'Agent not found')
     updates = {k:v for k,v in agent.model_dump().items() if v is not None}
-    if not updates: conn.close(); raise HTTPException(400, 'No fields to update')
+    # These are provider credentials, not agent columns - route them to the
+    # user's key store against whichever provider the agent ends up on.
+    api_key = updates.pop('api_key', None)
+    base_url = updates.pop('base_url', None)
+    if api_key:
+        save_user_api_key(user_id, updates.get('llm_provider') or existing['llm_provider'], api_key, base_url or '')
+    if not updates: conn.close(); return await get_agent(agent_id, user_id)
     if 'is_sub_agent' in updates: updates['is_sub_agent'] = int(updates['is_sub_agent'])
     updates['updated_at'] = datetime.utcnow().isoformat()
     sc = ', '.join(f'{k}=?' for k in updates)
