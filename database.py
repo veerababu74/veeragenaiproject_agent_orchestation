@@ -68,6 +68,14 @@ def init_db():
             agent_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS run_events (
+            id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, user_id TEXT NOT NULL, seq INTEGER NOT NULL,
+            event_type TEXT NOT NULL, name TEXT DEFAULT '', agent TEXT DEFAULT '', agent_id TEXT DEFAULT '',
+            depth INTEGER DEFAULT 0, content TEXT DEFAULT '', data TEXT DEFAULT '{}',
+            duration_ms INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_events ON run_events(execution_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_run_events_user ON run_events(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_convmsg ON conversation_messages(user_id, conversation_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(user_id);
         CREATE INDEX IF NOT EXISTS idx_connections_user ON agent_connections(user_id);
@@ -108,6 +116,7 @@ def cleanup_expired_data():
                         pass
 
     conn = get_db()
+    conn.execute("DELETE FROM run_events WHERE created_at < datetime('now', '-48 hours')")
     conn.execute("DELETE FROM conversation_messages WHERE created_at < datetime('now', '-48 hours')")
     conn.execute("DELETE FROM agent_executions WHERE created_at < datetime('now', '-48 hours')")
     conn.execute("DELETE FROM rag_documents WHERE created_at < datetime('now', '-48 hours')")

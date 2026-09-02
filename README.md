@@ -93,6 +93,31 @@ of agents it delegates to, which run their own graphs underneath, do not
 interleave. Delegation steps are pushed onto a queue by the tool as they
 happen, so the client sees which agent is being consulted mid-run.
 
+## Tracing and observability
+
+Every run records an ordered timeline in `run_events`: the question, what the
+model reasoned and which tools it chose off the back of that reasoning, each
+tool call with its arguments, each result or failure with its duration, and the
+final answer.
+
+`services/tracing.py` does this with a LangChain callback handler rather than
+by instrumenting the orchestrator by hand, because callbacks propagate into the
+graphs that delegated agents run - a sub-agent's own reasoning and tool calls
+land in the same timeline, in the right order, with no extra plumbing. Each
+compiled graph is stamped with `agent_name`/`agent_id`/`agent_depth`, so every
+event says which agent produced it and how deep the delegation went. Events are
+buffered during the run and written in one transaction at the end; token usage
+is summed from the models' `usage_metadata` into `agent_executions.tokens_used`.
+
+- `GET /execute/runs/{execution_id}` - one run, its full timeline, and a summary
+  (steps, tool calls, tools used, agents involved, delegations, depth, errors).
+- `GET /execute/metrics` - success rate, average and p95 duration, total tokens,
+  and per-tool and per-agent breakdowns.
+- `POST /execute/stream` also emits each step live as a `trace` event, so the UI
+  shows what the agent is doing while it is still doing it.
+
+Traces fall under the same 48-hour deletion as everything else.
+
 ## Export and import
 
 `GET /agents/export` returns the whole workspace - agents, connections, tools,

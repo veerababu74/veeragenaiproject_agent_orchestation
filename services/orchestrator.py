@@ -9,6 +9,7 @@ from datetime import datetime
 from database import get_db
 from services.llm_provider import get_user_llm
 from services.tool_builder import get_agent_tools
+from services.tracing import RunTracer, QUESTION, ANSWER, ERROR
 
 # How many earlier turns of a conversation are replayed to the agent. Bounded so
 # a long chat cannot grow the prompt without limit.
@@ -159,7 +160,12 @@ def build_agent_graph(user_id, agent_id, depth=0, chain=(), trace=None):
     else:
         graph.add_edge('agent', END)
     graph.add_edge(START, 'agent')
-    return graph.compile()
+    # Stamp the graph with who this is, so every model call and tool run beneath
+    # it is attributable in the trace. A delegated agent compiles its own graph
+    # and overrides these for its own subtree.
+    return graph.compile().with_config({'metadata': {
+        'agent_name': agent['name'], 'agent_id': agent_id, 'agent_depth': depth,
+    }})
 
 
 def load_history(user_id, conversation_id):
@@ -203,12 +209,14 @@ def _start_execution(user_id, agent_id, message):
     return eid
 
 
-def _finish_execution(eid, output, duration_ms, error=None):
+def _finish_execution(eid, output, duration_ms, error=None, tokens=0):
     conn = get_db()
     if error is None:
-        conn.execute("UPDATE agent_executions SET output_text=?,status='completed',duration_ms=? WHERE id=?", (output, duration_ms, eid))
+        conn.execute("UPDATE agent_executions SET output_text=?,status='completed',duration_ms=?,tokens_used=? WHERE id=?",
+                     (output, duration_ms, tokens, eid))
     else:
-        conn.execute("UPDATE agent_executions SET status='error',error_message=?,duration_ms=? WHERE id=?", (error, duration_ms, eid))
+        conn.execute("UPDATE agent_executions SET status='error',error_message=?,duration_ms=?,tokens_used=? WHERE id=?",
+                     (error, duration_ms, tokens, eid))
     conn.commit(); conn.close()
 
 
@@ -216,18 +224,26 @@ async def execute_agent(user_id, agent_id, message, conversation_id=None):
     eid = _start_execution(user_id, agent_id, message)
     t0 = time.time()
     trace = Trace()
+    tracer = RunTracer(eid, user_id)
+    tracer.add(QUESTION, content=message)
     try:
         graph = build_agent_graph(user_id, agent_id, trace=trace)
         history = load_history(user_id, conversation_id)
-        result = await graph.ainvoke({'messages': history + [HumanMessage(content=message)]})
+        result = await graph.ainvoke({'messages': history + [HumanMessage(content=message)]},
+                                     config={'callbacks': [tracer]})
         output = _final_text(result)
         dur = int((time.time() - t0) * 1000)
-        _finish_execution(eid, output, dur)
+        tracer.add(ANSWER, content=output, duration_ms=dur)
+        tracer.flush()
+        _finish_execution(eid, output, dur, tokens=tracer.tokens_in + tracer.tokens_out)
         save_turn(user_id, conversation_id, agent_id, message, output)
-        return {'execution_id': eid, 'status': 'completed', 'output': output, 'duration_ms': dur, 'delegations': list(trace)}
+        return {'execution_id': eid, 'status': 'completed', 'output': output, 'duration_ms': dur,
+                'delegations': list(trace), 'tokens': tracer.tokens_in + tracer.tokens_out}
     except Exception as e:
         dur = int((time.time() - t0) * 1000)
-        _finish_execution(eid, '', dur, error=str(e))
+        tracer.add(ERROR, content=str(e), duration_ms=dur)
+        tracer.flush()
+        _finish_execution(eid, '', dur, error=str(e), tokens=tracer.tokens_in + tracer.tokens_out)
         return {'execution_id': eid, 'status': 'error', 'error': str(e), 'duration_ms': dur, 'delegations': list(trace)}
 
 
@@ -238,12 +254,16 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
     t0 = time.time()
     queue = asyncio.Queue()
     trace = Trace(queue)
+    tracer = RunTracer(eid, user_id, queue)
+    tracer.add(QUESTION, content=message)
     yield {'type': 'start', 'execution_id': eid}
 
     try:
         graph = build_agent_graph(user_id, agent_id, trace=trace)
         history = load_history(user_id, conversation_id)
     except Exception as error:
+        tracer.add(ERROR, content=str(error))
+        tracer.flush()
         _finish_execution(eid, '', int((time.time() - t0) * 1000), error=str(error))
         yield {'type': 'error', 'error': str(error)}
         return
@@ -254,7 +274,8 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
     async def run():
         nonlocal final_state
         async for event in graph.astream_events(
-            {'messages': history + [HumanMessage(content=message)]}, version='v2'
+            {'messages': history + [HumanMessage(content=message)]}, version='v2',
+            config={'callbacks': [tracer]},
         ):
             kind = event.get('event')
             # Only the top-level agent's tokens are shown; delegated agents run
@@ -284,12 +305,21 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
             break
     except Exception as error:
         task.cancel()
-        _finish_execution(eid, '', int((time.time() - t0) * 1000), error=str(error))
+        dur = int((time.time() - t0) * 1000)
+        tracer.add(ERROR, content=str(error), duration_ms=dur)
+        tracer.flush()
+        _finish_execution(eid, '', dur, error=str(error), tokens=tracer.tokens_in + tracer.tokens_out)
         yield {'type': 'error', 'error': str(error), 'delegations': list(trace)}
         return
 
     output = _final_text(final_state) or ''.join(chunks).strip()
     dur = int((time.time() - t0) * 1000)
-    _finish_execution(eid, output, dur)
+    tracer.add(ANSWER, content=output, duration_ms=dur)
+    while not queue.empty():  # the ANSWER event was queued after the last drain
+        yield queue.get_nowait()
+    tracer.flush()
+    tokens = tracer.tokens_in + tracer.tokens_out
+    _finish_execution(eid, output, dur, tokens=tokens)
     save_turn(user_id, conversation_id, agent_id, message, output)
-    yield {'type': 'done', 'execution_id': eid, 'output': output, 'duration_ms': dur, 'delegations': list(trace)}
+    yield {'type': 'done', 'execution_id': eid, 'output': output, 'duration_ms': dur,
+           'delegations': list(trace), 'tokens': tokens}
