@@ -264,7 +264,9 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
                 if isinstance(text, str) and text:
                     chunks.append(text)
                     queue.put_nowait({'type': 'token', 'text': text})
-            elif kind == 'on_chain_end' and event.get('name') == 'LangGraph':
+            elif kind == 'on_chain_end' and event.get('name') == 'LangGraph' and not event.get('parent_ids'):
+                # Delegated agents run their own graph, which ends with the same
+                # event name; only the root run's output is this reply.
                 final_state = event['data'].get('output') or {}
 
     task = asyncio.create_task(run())
