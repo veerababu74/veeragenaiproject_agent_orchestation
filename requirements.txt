@@ -12,6 +12,9 @@ langchain-anthropic>=0.2.0
 langchain-google-genai>=2.0.0
 langchain-groq>=0.2.0
 langchain-community>=0.3.0
+# Backs the DuckDuckGo built-in tool. Without it the tool silently fails to
+# build and is dropped, despite being advertised as needing no API key.
+ddgs>=9.0.0
 langgraph>=0.2.0
 langchain-text-splitters>=0.3.0
 requests>=2.31.0

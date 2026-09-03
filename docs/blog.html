@@ -1,0 +1,671 @@
+<title>When Agents Delegate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+
+<style>
+  /* ── Tokens: complete light palette on bare :root ───────────────────── */
+  :root {
+    --paper:      #f5f7f8;
+    --surface:    #ffffff;
+    --ink:        #14191d;
+    --ink-soft:   #4c5860;
+    --ink-faint:  #79868e;
+    --rule:       #dbe2e5;
+    --rule-soft:  #e9eef0;
+
+    --petrol:     #0b5f63;   /* primary accent — instrumentation teal */
+    --petrol-lift:#0e7c81;
+    --amber:      #a86a09;   /* reserved for decision moments only */
+    --amber-bg:   #fbf1dd;
+    --rose:       #a3384a;   /* failure */
+    --rose-bg:    #fbeaec;
+    --moss:       #2f6b45;   /* success */
+    --moss-bg:    #e7f2ea;
+    --petrol-bg:  #e2eff0;
+
+    --code-bg:    #101a1c;
+    --code-ink:   #d6e4e4;
+    --code-dim:   #7d9599;
+
+    --measure: 66ch;
+    --wide: 78ch;
+
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0d1113;
+      --surface:    #141a1d;
+      --ink:        #e6edee;
+      --ink-soft:   #a3b1b5;
+      --ink-faint:  #74858a;
+      --rule:       #263034;
+      --rule-soft:  #1d2528;
+
+      --petrol:     #4fb3b6;
+      --petrol-lift:#6ecdcf;
+      --amber:      #d9a247;
+      --amber-bg:   #2a2114;
+      --rose:       #e0808f;
+      --rose-bg:    #2c1a1e;
+      --moss:       #7dc496;
+      --moss-bg:    #16261c;
+      --petrol-bg:  #12292b;
+
+      --code-bg:    #161f22;
+      --code-ink:   #cfe0e0;
+      --code-dim:   #6c8286;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0d1113;
+    --surface:    #141a1d;
+    --ink:        #e6edee;
+    --ink-soft:   #a3b1b5;
+    --ink-faint:  #74858a;
+    --rule:       #263034;
+    --rule-soft:  #1d2528;
+
+    --petrol:     #4fb3b6;
+    --petrol-lift:#6ecdcf;
+    --amber:      #d9a247;
+    --amber-bg:   #2a2114;
+    --rose:       #e0808f;
+    --rose-bg:    #2c1a1e;
+    --moss:       #7dc496;
+    --moss-bg:    #16261c;
+    --petrol-bg:  #12292b;
+
+    --code-bg:    #161f22;
+    --code-ink:   #cfe0e0;
+    --code-dim:   #6c8286;
+  }
+
+  /* ── Base ───────────────────────────────────────────────────────────── */
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 19px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { width: min(100% - 2.5rem, var(--wide)); margin-inline: auto; }
+  .col { width: min(100%, var(--measure)); }
+
+  a { color: var(--petrol); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:hover { color: var(--petrol-lift); }
+  :focus-visible { outline: 2px solid var(--petrol); outline-offset: 3px; border-radius: 2px; }
+
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.1; margin: 0; }
+  p { margin: 0; }
+
+  /* ── Masthead ───────────────────────────────────────────────────────── */
+  header.masthead {
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface);
+  }
+  .masthead-inner {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 1rem; flex-wrap: wrap; padding: 1rem 0;
+  }
+  .wordmark {
+    font-family: var(--mono); font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--petrol);
+  }
+  .masthead-meta {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+
+  /* ── Hero ───────────────────────────────────────────────────────────── */
+  .hero { padding: 4.5rem 0 3rem; display: grid; gap: 1.6rem; }
+  h1 {
+    font-size: clamp(2.6rem, 7vw, 4.6rem);
+    font-weight: 800; letter-spacing: -0.028em;
+  }
+  h1 .em { color: var(--petrol); font-style: normal; }
+  .standfirst {
+    font-size: clamp(1.12rem, 2.4vw, 1.34rem);
+    color: var(--ink-soft); max-width: 58ch; line-height: 1.5;
+  }
+  .byline {
+    display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .byline span[aria-hidden] { color: var(--rule); }
+
+  /* ── The trace: the page's thesis object ────────────────────────────── */
+  .trace {
+    background: var(--code-bg); border-radius: 10px; overflow: hidden;
+    box-shadow: 0 18px 40px -28px rgba(8, 25, 28, .75);
+  }
+  .trace-bar {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.6rem 0.95rem; border-bottom: 1px solid rgba(255,255,255,.07);
+    font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--code-dim);
+  }
+  .trace-bar b { color: var(--code-ink); font-weight: 700; letter-spacing: 0.11em; }
+  .trace-rows { overflow-x: auto; padding: 0.5rem 0 0.75rem; }
+  .row {
+    display: grid; grid-template-columns: 2.4rem 7.4rem 1fr;
+    gap: 0.85rem; align-items: baseline;
+    padding: 0.28rem 0.95rem;
+    font-family: var(--mono); font-size: 0.735rem; line-height: 1.55;
+    color: var(--code-ink); white-space: nowrap;
+  }
+  .row .n { color: var(--code-dim); text-align: right; font-variant-numeric: tabular-nums; }
+  .row .kind { font-weight: 700; letter-spacing: 0.02em; }
+  .row.k-question .kind { color: #8fb8ff; }
+  .row.k-reason   .kind { color: var(--amber); }
+  .row.k-call     .kind { color: #e39a6b; }
+  .row.k-result   .kind { color: #79c69a; }
+  .row.k-answer   .kind { color: #79c69a; }
+  .row .who { color: var(--code-dim); }
+  .row .txt { color: var(--code-ink); white-space: pre; }
+  .row .chose { color: var(--amber); }
+  .d1 { padding-left: 2.6rem; }
+  .trace-note {
+    padding: 0.7rem 0.95rem; border-top: 1px solid rgba(255,255,255,.07);
+    font-family: var(--mono); font-size: 0.66rem; color: var(--code-dim); line-height: 1.6;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .row { animation: rowin .42s cubic-bezier(.2,.7,.3,1) backwards; }
+    @keyframes rowin { from { opacity: 0; transform: translateX(-6px); } }
+  }
+
+  /* ── Article ────────────────────────────────────────────────────────── */
+  article { padding: 1rem 0 5rem; display: grid; gap: 3.4rem; }
+  section { display: grid; gap: 1.15rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 700;
+    letter-spacing: 0.15em; text-transform: uppercase; color: var(--petrol);
+    display: flex; align-items: center; gap: 0.7rem;
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+  h2 { font-size: clamp(1.7rem, 3.6vw, 2.3rem); font-weight: 600; letter-spacing: -0.02em; }
+  h3 {
+    font-size: 1.06rem; font-weight: 600; letter-spacing: -0.005em;
+    color: var(--ink); margin-top: 0.4rem;
+  }
+  section > p { max-width: var(--measure); }
+  em.lede { font-style: italic; color: var(--ink-soft); }
+  strong { font-weight: 500; color: var(--ink); background: linear-gradient(transparent 62%, var(--petrol-bg) 62%); }
+
+  blockquote {
+    margin: 0; padding: 0.15rem 0 0.15rem 1.15rem;
+    border-left: 2px solid var(--amber);
+    font-style: italic; color: var(--ink-soft); max-width: var(--measure);
+  }
+
+  /* code */
+  pre {
+    margin: 0; background: var(--code-bg); color: var(--code-ink);
+    border-radius: 8px; padding: 1rem 1.15rem; overflow-x: auto;
+    font-family: var(--mono); font-size: 0.755rem; line-height: 1.65;
+  }
+  pre .c { color: var(--code-dim); font-style: italic; }
+  pre .k { color: #7fb0e8; }
+  pre .s { color: #94cba8; }
+  pre .f { color: #e3b872; }
+  pre b { color: #f0a8a8; font-weight: 700; }
+  code {
+    font-family: var(--mono); font-size: 0.83em;
+    background: var(--rule-soft); padding: 0.1em 0.36em; border-radius: 4px;
+    color: var(--ink);
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+  figcaption {
+    font-family: var(--mono); font-size: 0.66rem; color: var(--ink-faint);
+    letter-spacing: 0.05em; margin-top: 0.5rem;
+  }
+  figure { margin: 0; display: grid; }
+
+  /* tables */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.66rem 0.9rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 0.64rem; font-weight: 700;
+    letter-spacing: 0.11em; text-transform: uppercase; color: var(--ink-faint);
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td:first-child { font-family: var(--display); font-weight: 600; white-space: nowrap; }
+
+  /* callout */
+  .callout {
+    display: grid; gap: 0.5rem; padding: 1.05rem 1.2rem;
+    border-radius: 8px; background: var(--surface);
+    border: 1px solid var(--rule); border-left: 3px solid var(--petrol);
+    max-width: var(--measure);
+  }
+  .callout .tag {
+    font-family: var(--mono); font-size: 0.63rem; font-weight: 700;
+    letter-spacing: 0.13em; text-transform: uppercase; color: var(--petrol);
+  }
+  .callout.warn { border-left-color: var(--rose); }
+  .callout.warn .tag { color: var(--rose); }
+  .callout p { font-size: 0.95rem; }
+
+  /* lessons */
+  .lessons { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+  .lesson {
+    display: grid; grid-template-columns: 2.2rem 1fr; gap: 1rem;
+    padding: 1.1rem 0; border-bottom: 1px solid var(--rule-soft);
+    max-width: var(--wide);
+  }
+  .lesson .num {
+    font-family: var(--mono); font-size: 0.7rem; font-weight: 700;
+    color: var(--petrol); padding-top: 0.28rem; font-variant-numeric: tabular-nums;
+  }
+  .lesson h3 { margin: 0 0 0.25rem; }
+  .lesson p { font-size: 0.95rem; color: var(--ink-soft); max-width: 60ch; }
+
+  /* stack footer */
+  footer {
+    border-top: 1px solid var(--rule); padding: 2rem 0 3rem;
+    display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem; align-items: baseline;
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em;
+    color: var(--ink-faint);
+  }
+  footer .stack { color: var(--ink-soft); }
+
+  @media (max-width: 620px) {
+    body { font-size: 17.5px; }
+    .row { grid-template-columns: 1.9rem 6.2rem 1fr; font-size: 0.68rem; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <span class="wordmark">Agent Orchestrator</span>
+    <span class="masthead-meta">Engineering notes · FastAPI · LangGraph · React</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h1>What breaks when <span class="em">agents talk<br>to each other</span></h1>
+    <p class="standfirst">
+      A multi-agent platform where you draw a graph of AI agents, give them tools, and chat
+      with any of them. This is the design — and, more usefully, the bugs that only appear
+      once agents start calling each other.
+    </p>
+    <div class="byline">
+      <span>Build notes</span><span aria-hidden="true">/</span>
+      <span>Multi-agent orchestration</span><span aria-hidden="true">/</span>
+      <span>~12 min read</span>
+    </div>
+  </div>
+
+  <figure>
+    <div class="trace">
+      <div class="trace-bar">
+        <b>Recorded run</b> <span aria-hidden="true">·</span> two agents, three tools, 11 steps
+      </div>
+      <div class="trace-rows">
+        <div class="row k-question" style="animation-delay:.00s"><span class="n">1</span><span class="kind">question</span><span class="txt">What is today and how many days are left?</span></div>
+        <div class="row k-reason" style="animation-delay:.05s"><span class="n">2</span><span class="kind">reasoning</span><span class="txt"><span class="who">[Supervisor]</span>  "…so I should ask the time specialist."  <span class="chose">→ chose ask_time_specialist</span></span></div>
+        <div class="row k-call" style="animation-delay:.10s"><span class="n">3</span><span class="kind">tool_call</span><span class="txt"><span class="who">[Supervisor]</span>  ask_time_specialist  {"question": "What is today?"}</span></div>
+        <div class="row k-reason d1" style="animation-delay:.15s"><span class="n">4</span><span class="kind">reasoning</span><span class="txt"><span class="who">[Time Specialist]</span>  "I need the current date."  <span class="chose">→ chose current_datetime</span></span></div>
+        <div class="row k-call d1" style="animation-delay:.20s"><span class="n">5</span><span class="kind">tool_call</span><span class="txt"><span class="who">[Time Specialist]</span>  current_datetime  {}</span></div>
+        <div class="row k-result d1" style="animation-delay:.25s"><span class="n">6</span><span class="kind">tool_result</span><span class="txt"><span class="who">[Time Specialist]</span>  {"date": "2026-09-02", "day": "Wednesday"}</span></div>
+        <div class="row k-result" style="animation-delay:.30s"><span class="n">7</span><span class="kind">tool_result</span><span class="txt"><span class="who">[Supervisor]</span>  ask_time_specialist  Today is Wednesday.</span></div>
+        <div class="row k-reason" style="animation-delay:.35s"><span class="n">8</span><span class="kind">reasoning</span><span class="txt"><span class="who">[Supervisor]</span>  <span class="chose">→ chose calculator</span></span></div>
+        <div class="row k-call" style="animation-delay:.40s"><span class="n">9</span><span class="kind">tool_call</span><span class="txt"><span class="who">[Supervisor]</span>  calculator  {"expression": "30-2"}</span></div>
+        <div class="row k-result" style="animation-delay:.45s"><span class="n">10</span><span class="kind">tool_result</span><span class="txt"><span class="who">[Supervisor]</span>  calculator  28</span></div>
+        <div class="row k-answer" style="animation-delay:.50s"><span class="n">11</span><span class="kind">answer</span><span class="txt">Today is Wednesday, and that leaves 28 days.</span></div>
+      </div>
+      <div class="trace-note">
+        Indentation is delegation depth. The agent in brackets is attributed automatically.
+        The <span style="color:var(--amber)">reasoning</span> rows are the point — the model's own
+        words at the moment of deciding, paired with the tools that decision produced.
+      </div>
+    </div>
+    <figcaption>The system's answer to "why did it say that?"</figcaption>
+  </figure>
+
+  <article>
+
+    <section>
+      <div class="eyebrow">The premise</div>
+      <h2>Three requirements that shaped everything</h2>
+      <p>
+        Most "multi-agent" demos are a single agent with a fancy prompt. I wanted the real thing:
+        a canvas where you create agents, connect them, give each one tools, and then talk to one
+        of them — and it consults the others to answer you.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Requirement</th><th>What it means in practice</th></tr></thead>
+          <tbody>
+            <tr><td>Visual</td><td>Drag out an agent, drag a line to another. Done.</td></tr>
+            <tr><td>Explainable</td><td>See which agents were consulted, which tools ran, and <em>why</em> they were chosen.</td></tr>
+            <tr><td>Forgetful</td><td>Everything — agents, documents, API keys — is deleted after 48 hours.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>That third one shaped the architecture more than anything else.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 1 — The pattern problem</div>
+      <h2>What does a connection actually mean?</h2>
+      <p>
+        When agent A is connected to agent B, what happens at run time? There are several
+        established answers — sequential pipeline, supervisor routing, conditional branching,
+        parallel fan-out. I started with <strong>supervisor</strong>, implemented as
+        <em>agent-as-tool</em>: each connected agent becomes a tool on the agent you're chatting with.
+      </p>
+      <figure>
+<pre><code>StructuredTool.<span class="f">from_function</span>(
+    coroutine=_run,
+    name=<span class="s">f"ask_{slug}"</span>,                       <span class="c"># ask_weather_expert</span>
+    description=<span class="s">f"Ask the specialist agent '{name}' a question "</span>
+                <span class="s">f"and get its answer back. Use it for: {purpose}."</span>,
+    args_schema=DelegateInput,                <span class="c"># {question: str}</span>
+)</code></pre>
+      </figure>
+      <p>
+        This is elegant. The model already knows how to choose tools, so it already knows how to
+        choose <em>agents</em>. Routing comes free from a capability the model already has.
+      </p>
+      <p>It worked on the first try. Then a user tried it and reported that it didn't work at all.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 2 — The bug that was a design flaw</div>
+      <h2>The graph was right. My model of it was wrong.</h2>
+      <blockquote>
+        "I connect two or three agents, I ask the 3rd agent one question, it's not communicating
+        to the other agents for the answers."
+      </blockquote>
+      <p>
+        My first instinct was that delegation tools weren't being bound. They were. So I wrote the
+        smallest test that reproduced the user's setup — three agents, arrows pointing toward the
+        final one:
+      </p>
+      <figure>
+<pre><code>Researcher       can consult -> [<span class="s">'Final Answerer'</span>]
+Analyst          can consult -> [<span class="s">'Final Answerer'</span>]
+Final Answerer   can consult -> <b>NOTHING</b></code></pre>
+        <figcaption>The reproduction, in three lines of output</figcaption>
+      </figure>
+      <p>
+        There it is. My query followed <strong>outgoing</strong> edges. The user had drawn arrows
+        pointing <em>into</em> their final agent — because that's the natural way to draw "these two
+        feed the answerer." Their final agent had nothing to consult, so it answered alone, silently.
+      </p>
+      <div class="callout">
+        <span class="tag">The call</span>
+        <p>
+          I could have documented "draw your arrows this way." That would have been wrong. When
+          users consistently draw something one way, the software is holding the wrong model.
+          A connection stopped being directional: <strong>it now means "these two can talk."</strong>
+        </p>
+      </div>
+
+      <h3>Which immediately created a better question</h3>
+      <p>
+        Making edges undirected fixed the confusion and exposed a bigger gap. The user came back
+        sharper: <em class="lede">is this actually doing sequential, conditional, and the other
+        orchestration patterns?</em>
+      </p>
+      <p>
+        No. It was doing exactly one pattern and calling it orchestration. Worse, a
+        <code>condition_expr</code> column had existed on every connection since the first commit —
+        stored, returned by the API, editable in the UI, and <strong>never evaluated by anything</strong>.
+        A field that looks like a feature and does nothing is worse than a missing feature.
+      </p>
+      <p>The fix was a per-agent mode, with one rule that keeps it all coherent:</p>
+      <div class="callout">
+        <span class="tag">The invariant</span>
+        <p>
+          In every mode except supervisor, <strong>the agent you chat with writes the final answer</strong>.
+          The mode only decides how its connected agents contribute first. That single rule is what
+          lets arrow direction stay irrelevant: the graph describes <em>capability</em>, the mode
+          describes <em>procedure</em>.
+        </p>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+          <tbody>
+            <tr><td>supervisor</td><td>The model is handed <code>ask_B</code>, <code>ask_C</code> as tools and picks. Flexible, not repeatable.</td></tr>
+            <tr><td>sequential</td><td>B runs, then C runs seeing what B said, then A composes. Deterministic.</td></tr>
+            <tr><td>parallel</td><td>B and C run at once, then A merges. Fastest for independent questions.</td></tr>
+            <tr><td>conditional</td><td>Only agents whose condition matches run, then A composes.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Conditional routing is <strong>one classification call covering every edge</strong>, not one per
+        edge. And it <strong>fails open</strong>: if the model returns prose instead of JSON, every
+        conditional agent contributes. Slower and more expensive — but a routing failure should
+        never leave the user with no answer. That single decision is the difference between a flaky
+        feature and a trustworthy one.
+      </p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 3 — Recursion</div>
+      <h2>A → B → A is one careless click away</h2>
+      <p>Two independent guards, because one is never enough:</p>
+      <figure>
+<pre><code><span class="c"># Guard 1 — depth. Past this, no delegate tools are offered at all.</span>
+MAX_DELEGATION_DEPTH = <span class="k">3</span>
+
+<span class="c"># Guard 2 — cycles. `chain` accumulates everyone already in this path.</span>
+delegates = [t <span class="k">for</span> t <span class="k">in</span> _connected_agents(user_id, agent_id)
+             <span class="k">if</span> t[<span class="s">'id'</span>] <span class="k">not in</span> chain]</code></pre>
+      </figure>
+      <p>Verified against a triangle where every agent connects to every other:</p>
+      <figure>
+<pre><code>Alpha (depth 0)              -> [<span class="s">'ask_beta'</span>, <span class="s">'ask_gamma'</span>]
+Beta reached from Alpha      -> [<span class="s">'ask_gamma'</span>]
+Gamma reached via Alpha,Beta -> &lt;no tools bound&gt;</code></pre>
+        <figcaption>Each hop offers strictly fewer options. The path cannot close.</figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 4 — The one worth reading</div>
+      <h2>A bug that had been there the whole time</h2>
+      <p>
+        I was writing a regression test that built an agent with a custom HTTP tool attached —
+        something no test had done before. It blew up:
+      </p>
+      <figure>
+<pre><code><b>pydantic.errors.PydanticUserError</b>: A non-annotated attribute was detected:
+`id = (&lt;class 'str'&gt;, FieldInfo(...))`. All model fields require a type annotation</code></pre>
+      </figure>
+      <p>The code that built a tool's argument schema from stored JSON:</p>
+      <figure>
+<pre><code>fields[key] = (field_type, Field(description=desc))
+<span class="k">return</span> <span class="f">type</span>(schema_name, (BaseModel,), fields)      <span class="c"># ← wrong</span></code></pre>
+      </figure>
+      <p>
+        <code>name: (type, FieldInfo)</code> is <strong>create_model's</strong> signature. Passing it to
+        <code>type()</code> creates plain class attributes with no annotations, which Pydantic v2
+        rejects outright.
+      </p>
+      <div class="callout warn">
+        <span class="tag">Why it mattered more than it looked</span>
+        <p>
+          <code>get_agent_tools</code> had no error handling, so the exception propagated up through
+          graph construction and <strong>killed the entire agent</strong>. Attach a custom tool, and that
+          agent stops answering — with an error pointing at Pydantic internals, nowhere near the cause.
+        </p>
+      </div>
+      <p>The fix is one line. The <em>lesson</em> is the second fix:</p>
+      <figure>
+<pre><code><span class="k">try</span>:
+    tool = create_custom_tool(...) <span class="k">if</span> custom <span class="k">else</span> create_builtin_tool(...)
+<span class="k">except</span> Exception:
+    logger.exception(<span class="s">'Skipping tool %s (%s) that failed to build'</span>, row[<span class="s">'name'</span>], tt)
+    <span class="k">continue</span></code></pre>
+        <figcaption>One broken tool must not take the agent down with it</figcaption>
+      </figure>
+      <p>Pulling that thread found four more problems in the same file:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Bug</th><th>How it presented</th></tr></thead>
+          <tbody>
+            <tr><td>GET dropped every argument</td><td>A <code>get_weather(city)</code> tool always called the bare URL. It looked like the model was being stupid. It wasn't.</td></tr>
+            <tr><td>PUT / PATCH / DELETE rejected</td><td>While the UI offered them in a dropdown.</td></tr>
+            <tr><td>Non-JSON reported as an error</td><td>Any API returning plain text looked broken.</td></tr>
+            <tr><td>HTTP 404 returned as success</td><td>The body parsed as JSON, so the model had no way to know the call failed.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        None of these throw. They all silently produce a wrong answer, which is the worst failure
+        mode a tool can have.
+      </p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 5 — Observability</div>
+      <h2>"The AI got it wrong" is not a debuggable statement</h2>
+      <p>
+        By now the system could answer by consulting three agents and running five tools. The naive
+        approach to tracing is to instrument the orchestrator by hand — log before the model call,
+        after the tool call. That falls apart immediately, because a delegated agent runs
+        <em>its own graph</em>; you'd have to thread trace state through every call.
+      </p>
+      <p>The better answer was already in LangChain: <strong>callbacks propagate down automatically.</strong></p>
+      <figure>
+<pre><code><span class="k">class</span> <span class="f">RunTracer</span>(AsyncCallbackHandler):
+    <span class="k">async def</span> <span class="f">on_llm_end</span>(self, response, *, run_id=<span class="k">None</span>, **kwargs):
+        ...
+        <span class="k">if</span> text.strip() <span class="k">and</span> tool_calls:
+            self.add(REASONING, content=text,
+                     data={<span class="s">'chose'</span>: [c.get(<span class="s">'name'</span>) <span class="k">for</span> c <span class="k">in</span> tool_calls]})</code></pre>
+      </figure>
+      <p>
+        One handler attached at the top captures everything beneath it, including inside sub-agents,
+        in the correct order. To know <em>which</em> agent produced an event, every compiled graph is
+        stamped with its own identity — and a delegated agent overrides the stamp for its subtree,
+        so attribution falls out for free. That's the timeline at the top of this page.
+      </p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 6 — Streaming</div>
+      <h2>One async trap worth knowing</h2>
+      <p>
+        Two sources merge into one ordered stream: LangGraph's event iterator, and a queue that
+        delegate tools push into. My first version leaked events:
+      </p>
+      <figure>
+<pre><code><span class="c"># Wrong — the shielded get() survives the timeout and later</span>
+<span class="c"># consumes an event that nobody is listening for.</span>
+<span class="k">yield await</span> asyncio.wait_for(asyncio.shield(queue.get()), timeout=<span class="k">0.25</span>)</code></pre>
+      </figure>
+      <p>
+        <code>shield</code> protects the inner task from cancellation, so on timeout the
+        <code>queue.get()</code> stays pending, eventually takes an item, and drops it on the floor.
+        The fix is to own exactly one getter and cancel it only when it has <em>not</em> completed.
+      </p>
+      <p>
+        There's a second subtlety. Delegated agents run their own models, whose token events
+        propagate into the same stream — and would interleave into your reply as gibberish. So the
+        top-level model is tagged and only its tokens stream. That filter looks decorative.
+        <strong>It is load-bearing.</strong>
+      </p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Part 7 — The constraint that designed the system</div>
+      <h2>Everything is deleted after 48 hours</h2>
+      <p>The obvious part is the sweep. The non-obvious part is <strong>ordering</strong>:</p>
+      <figure>
+<pre><code><span class="c"># External state first — the row is what tells us where it lives.</span>
+<span class="k">for</span> doc <span class="k">in</span> expiring_docs:
+    rag_vector_store.delete_document(doc[<span class="s">'user_id'</span>], doc[<span class="s">'id'</span>], doc[<span class="s">'chunk_count'</span>])
+    rag_storage.delete(doc[<span class="s">'remote_path'</span>])
+
+<span class="c"># Only then the rows.</span>
+conn.execute(<span class="s">"DELETE FROM rag_documents WHERE created_at &lt; datetime('now','-48 hours')"</span>)</code></pre>
+      </figure>
+      <p>
+        Delete the SQLite row first and you lose the <code>remote_path</code> and
+        <code>chunk_count</code> needed to clean up Pinecone and Hugging Face — orphaning data in two
+        external systems forever, invisibly.
+      </p>
+      <p>
+        The more interesting consequence: if everything is deleted, users lose their work every two
+        days. The answer wasn't to weaken the policy — it was export/import, the whole workspace as
+        JSON. With one non-negotiable rule: <strong>credentials are stripped on export.</strong> The file
+        gets downloaded, emailed, committed to a repo. Everything in it is re-enterable, so the safe
+        default is the only defensible one.
+      </p>
+    </section>
+
+    <section>
+      <div class="eyebrow">What I'd tell someone building this</div>
+      <h2>Six things that generalise</h2>
+      <div class="lessons">
+        <div class="lesson">
+          <span class="num">01</span>
+          <div>
+            <h3>Watch how people draw the diagram</h3>
+            <p>The direction bug wasn't a coding error; it was my mental model losing to the user's. When users consistently do something "wrong", the software is wrong.</p>
+          </div>
+        </div>
+        <div class="lesson">
+          <span class="num">02</span>
+          <div>
+            <h3>A field that exists but does nothing is a lie</h3>
+            <p><code>condition_expr</code> sat in the schema and the UI for weeks doing nothing. Either wire it up or delete it.</p>
+          </div>
+        </div>
+        <div class="lesson">
+          <span class="num">03</span>
+          <div>
+            <h3>Isolate every extension point</h3>
+            <p>One malformed custom tool killed an entire agent because nothing was wrapped. Anything user-defined should be able to fail without taking the system with it.</p>
+          </div>
+        </div>
+        <div class="lesson">
+          <span class="num">04</span>
+          <div>
+            <h3>Silent wrongness is the enemy</h3>
+            <p>The GET-drops-arguments bug threw no error, logged nothing, and produced a plausible wrong answer. Those cost far more than crashes.</p>
+          </div>
+        </div>
+        <div class="lesson">
+          <span class="num">05</span>
+          <div>
+            <h3>Build the trace before you need it</h3>
+            <p>Once more than one model is involved, "why did it answer that?" stops being answerable by reading code. The callback handler took an afternoon and has explained every confusing run since.</p>
+          </div>
+        </div>
+        <div class="lesson">
+          <span class="num">06</span>
+          <div>
+            <h3>Decide how each failure degrades</h3>
+            <p>Conditional routing fails open. A broken tool is skipped. A failed run isn't written to memory. Each one is the difference between a demo and something you'd let someone use.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </article>
+
+  <footer>
+    <span class="stack">FastAPI · LangGraph · LangChain · React · SQLite · Pinecone</span>
+    <span>Full technical documentation in ARCHITECTURE.md</span>
+  </footer>
+
+</div>
