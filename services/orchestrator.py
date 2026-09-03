@@ -70,7 +70,7 @@ def _connected_agents(user_id, agent_id):
     """
     conn = get_db()
     rows = conn.execute(
-        '''SELECT a.id, a.name, a.description, c.label
+        '''SELECT a.id, a.name, a.description, c.label, c.condition_expr AS condition
            FROM agent_connections c
            JOIN agents a ON a.id = CASE WHEN c.source_agent_id = :aid
                                         THEN c.target_agent_id ELSE c.source_agent_id END
@@ -80,11 +80,15 @@ def _connected_agents(user_id, agent_id):
     ).fetchall()
     conn.close()
     # Two agents can be linked more than once; each should appear as one tool.
+    # Keep whichever link carries the most routing information.
+    def routing_detail(entry):
+        return bool(entry.get('condition')) + bool(entry.get('label'))
+
     unique = {}
     for row in rows:
         entry = dict(row)
         existing = unique.get(entry['id'])
-        if existing is None or (not existing.get('label') and entry.get('label')):
+        if existing is None or routing_detail(entry) > routing_detail(existing):
             unique[entry['id']] = entry
     return list(unique.values())
 
@@ -436,7 +440,10 @@ async def stream_agent(user_id, agent_id, message, conversation_id=None):
     async def run():
         nonlocal final_state
         async for event in graph.astream_events(
-            {'messages': history + [HumanMessage(content=message)]}, version='v2',
+            # `question`, not `message`: in every mode except supervisor this
+            # carries the answers already gathered from connected agents. Using
+            # the raw message here threw that work away.
+            {'messages': history + [HumanMessage(content=question)]}, version='v2',
             config={'callbacks': [tracer]},
         ):
             kind = event.get('event')

@@ -1,5 +1,10 @@
 # Agent Orchestrator Backend
 
+> **Documentation**
+> - [ARCHITECTURE.md](ARCHITECTURE.md) — what the system is: modules, data model, API reference, design decisions.
+> - [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) — how the code works: every function line by line, and why it is written that way.
+> - [BLOG.md](BLOG.md) — the narrative version, including the bugs that shaped the design.
+
 FastAPI service for the Agent Orchestrator platform: agent graph management, tool
 definitions, RAG document uploads, agent execution (LangChain + LangGraph), and
 per-user LLM provider settings. SQLite-backed, deployed as its own standalone
