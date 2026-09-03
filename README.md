@@ -2,7 +2,7 @@
 
 > **Documentation**
 > - [ARCHITECTURE.md](ARCHITECTURE.md) — what the system is: modules, data model, API reference, design decisions.
-> - [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) — how the code works: every function line by line, and why it is written that way.
+> - [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) — **start here.** Part 0 explains what the project is with no code; Part 1 walks every function line by line.
 > - [BLOG.md](BLOG.md) — the narrative version, including the bugs that shaped the design.
 
 FastAPI service for the Agent Orchestrator platform: agent graph management, tool

@@ -1,15 +1,36 @@
-# Code Walkthrough — Every Function, Line by Line
+# Understanding This Project, From Zero to Every Line
 
-`ARCHITECTURE.md` describes *what the system is*. This document explains *how the
-code actually works* — each function, what it receives, what every line does, why
+This document has two parts, and you should read them in order.
+
+**Part 0 — What this project is.** No code at all. What problem it solves, what
+you build with it, the six words the whole system is made of, and one complete
+example followed from the question you type to the answer that comes back. Start
+here even if you wrote some of this code; the rest depends on the vocabulary.
+
+**Part 1 — The code.** Every function: what it receives, what each line does, why
 it is written that way, and what would break if it were written differently.
 
-Read it top to bottom and you should be able to answer any question about this
-codebase.
+Read both and you should be able to answer any question about this project —
+whether someone asks "so what does it actually do?" or "why is that tuple
+immutable?"
+
+*(`ARCHITECTURE.md` is the reference companion to this: the data model, the full
+API surface, and the design trade-offs, organised for looking things up rather
+than reading through.)*
 
 ---
 
 ## Contents
+
+**Start here if you are new to the project:**
+
+- [0.1 What problem does this solve?](#01-what-problem-does-this-solve)
+- [0.2 What you actually build with it](#02-what-you-actually-build-with-it)
+- [0.3 The six words you need](#03-the-six-words-you-need)
+- [0.4 A complete example, start to finish](#04-a-complete-example-start-to-finish)
+- [0.5 Where everything lives](#05-where-everything-lives)
+
+**Then the code:**
 
 1. [How to read a run](#1-how-to-read-a-run)
 2. [Startup: what happens before any request](#2-startup)
@@ -24,6 +45,264 @@ codebase.
 11. [Questions you should be able to answer](#11-questions-you-should-be-able-to-answer)
 
 ---
+
+# Part 0 — What this project is
+
+*No code in this part. Read it first and the rest will make sense.*
+
+## 0.1 What problem does this solve?
+
+When you use ChatGPT you talk to **one** AI. It has one personality, one set of
+instructions, and one set of abilities. That works until your problem has several
+different parts.
+
+Say you want to plan a trip. That question really contains three jobs:
+
+- checking the **weather** at the destination,
+- working out the **budget**,
+- and writing the final **plan** in a way that reads well.
+
+You could write one giant prompt trying to do all three. In practice that agent
+becomes mediocre at each: its instructions contradict each other, and giving it a
+Slack key so it can post the plan also gives it a Slack key while doing budget
+maths.
+
+**This project lets you build a small team instead.** Each agent is separately
+configured — its own instructions, its own AI model, its own tools — and you
+connect the ones that should work together. Then you talk to one of them, and it
+pulls in the others when it needs them.
+
+```mermaid
+flowchart LR
+    subgraph one["The usual way"]
+        U1[You] --> A1["One agent<br/>one prompt<br/>all the tools"]
+    end
+    subgraph many["This project"]
+        U2[You] --> P["Trip Planner"]
+        P <--> W["Weather Agent<br/>web search tool"]
+        P <--> B["Budget Agent<br/>calculator tool"]
+    end
+```
+
+Two things follow from that design, and they are the reason the project exists:
+
+1. **Each agent stays small and good at one thing.** The Weather Agent's prompt
+   is about weather. It has a search tool. It has nothing else.
+2. **You can see what happened.** Because the work is split into steps, the system
+   records every step — which agent was asked, what it was asked, which tool it
+   ran, and what came back. When the answer is wrong you can find the step where
+   it went wrong instead of guessing.
+
+## 0.2 What you actually build with it
+
+You work on a canvas, like a whiteboard.
+
+```mermaid
+flowchart TD
+    subgraph canvas["The canvas you draw on"]
+        TP["🧭 Trip Planner<br/><i>the one you chat with</i>"]
+        WA["🌤 Weather Agent"]
+        BA["💰 Budget Agent"]
+        WA --- TP
+        BA --- TP
+    end
+    TP -.->|has| T1["Tool: web search"]
+    WA -.->|has| T2["Tool: web search"]
+    BA -.->|has| T3["Tool: calculator"]
+```
+
+Concretely, you:
+
+1. **Create an agent.** Give it a name, write its instructions ("You are a weather
+   specialist. Answer briefly."), pick an AI provider and model, and paste your
+   API key.
+2. **Give it tools.** A calculator, a web search, a Slack poster, a search over
+   your own uploaded documents, or any HTTP API you describe.
+3. **Connect agents** by dragging a line between them. A line means *these two are
+   allowed to talk*.
+4. **Choose how the team works** — does the model decide who to ask, or should
+   everyone always be asked in a fixed order? That is the *orchestration mode*.
+5. **Chat with one agent** and read the answer, with the full step-by-step record
+   of how it got there.
+
+## 0.3 The six words you need
+
+Everything in this codebase is one of these six things.
+
+| Word | Plain meaning | Where it lives |
+|---|---|---|
+| **Agent** | One configured AI worker: instructions, a model, and some tools. | A row in the `agents` table |
+| **Tool** | Something an agent can *do* rather than *say* — search the web, do maths, call an API. | A row in `tools`, attached to agents via `tool_assignments` |
+| **Connection** | A line between two agents meaning "these two can talk". | A row in `agent_connections` |
+| **Orchestration mode** | The rule for *how* an agent uses its connections: does the AI choose, or does the code decide the order? | A column on `agents` |
+| **Run** | One question, from you pressing send to the answer arriving. | A row in `agent_executions` |
+| **Trace** | The recorded list of every step inside a run. | Rows in `run_events` |
+
+The one insight that unlocks the whole codebase:
+
+> **Asking another agent is implemented as a tool.**
+>
+> The AI model already knows how to pick between "use the calculator" and "search
+> the web". So instead of inventing a separate mechanism for agent-to-agent
+> communication, each connected agent is wrapped up to *look* like a tool, named
+> `ask_weather_agent`. The model chooses between tools and agents using one
+> mechanism it already understands.
+
+## 0.4 A complete example, start to finish
+
+Let's follow one real question through the whole system. Our setup:
+
+- **Trip Planner** — the agent you chat with. Orchestration mode: `supervisor`.
+- **Weather Agent** — connected to Trip Planner. Has a web search tool.
+- **Budget Agent** — connected to Trip Planner. Has a calculator tool.
+
+You type: **"I'm going to Goa for 5 days with ₹40,000. What should I expect?"**
+
+### What you see
+
+The answer streams in word by word. Above it, a small expandable line says
+*"Consulted 2 agents"*. Opening it shows what each was asked and what it said.
+
+### What actually happens
+
+```mermaid
+sequenceDiagram
+    participant You
+    participant TP as Trip Planner
+    participant WA as Weather Agent
+    participant Search as Web search tool
+    participant BA as Budget Agent
+    participant Calc as Calculator tool
+
+    You->>TP: Goa, 5 days, ₹40,000?
+    Note over TP: Sees three tools:<br/>ask_weather_agent,<br/>ask_budget_agent,<br/>web search
+    TP->>WA: What is the weather in Goa in December?
+    WA->>Search: Goa weather December
+    Search-->>WA: 28-32°C, dry season
+    WA-->>TP: Warm and dry, 28-32°C
+    TP->>BA: Is ₹40,000 enough for 5 days in Goa?
+    BA->>Calc: 40000 / 5
+    Calc-->>BA: 8000
+    BA-->>TP: ₹8,000 per day — comfortable
+    Note over TP: Combines both answers
+    TP-->>You: Goa in December is warm and dry...<br/>₹8,000 a day is comfortable...
+```
+
+Step by step, with the responsible code:
+
+| # | What happens | Code |
+|---|---|---|
+| 1 | Your question arrives with your login token | `routers/execute.py` → `auth.py` |
+| 2 | Mode is `supervisor`, so nothing is pre-run; peers become tools | `orchestrate()` |
+| 3 | The Trip Planner's toolbox is assembled: its own tools **plus** `ask_weather_agent` and `ask_budget_agent` | `build_agent_graph()` |
+| 4 | The model reads the question and asks for `ask_weather_agent` | the `agent` node |
+| 5 | That tool builds the Weather Agent's *own* graph and runs it | `_delegate_tool()` |
+| 6 | The Weather Agent's model asks for its search tool, reads the result, and answers | the same loop, one level down |
+| 7 | Its answer returns to the Trip Planner as a tool result | back in `_delegate_tool()` |
+| 8 | Same again for the Budget Agent | — |
+| 9 | With both answers in context, the model writes the final reply | the `agent` node, last pass |
+| 10 | Every step is written to the trace, and the answer is saved as chat history | `tracing.flush()`, `save_turn()` |
+
+**The important realisation:** steps 4–9 are the *same loop* running at two levels.
+The Weather Agent isn't special-cased anywhere. It is an agent, built by the same
+function, running the same loop — it just happens to have been started by a tool
+call instead of by you.
+
+### The loop, on its own
+
+Every agent, at every level, runs exactly this:
+
+```mermaid
+flowchart TD
+    S([Question arrives]) --> M["Model reads everything so far"]
+    M --> Q{"Did it ask<br/>for a tool?"}
+    Q -->|Yes| T["Run that tool<br/>append the result"]
+    T --> M
+    Q -->|No| A([Its text is the answer])
+```
+
+That is the entire agent. Everything else in this codebase is setup around this
+loop, or recording what it did.
+
+### What if the mode wasn't `supervisor`?
+
+In `supervisor` the **model** decided to ask both agents. It might have asked one,
+or neither. The other three modes take that decision away from the model:
+
+| Mode | What happens with our two connected agents |
+|---|---|
+| `supervisor` | The model chooses. Might ask both, one, or neither. |
+| `sequential` | Weather runs, then Budget runs *and is shown what Weather said*, then Trip Planner writes the answer. Always. |
+| `parallel` | Weather and Budget run at the same time, then Trip Planner merges. Always. |
+| `conditional` | Only the agents whose condition matches this question run. |
+
+In those three, the connected agents run **before** the model is asked anything,
+and their answers are pasted into the question. So the Trip Planner is asked:
+
+```
+I'm going to Goa for 5 days with ₹40,000. What should I expect?
+
+--- Answers gathered from your connected agents (sequential orchestration) ---
+[Weather Agent]
+Warm and dry, 28-32°C.
+
+[Budget Agent]
+₹8,000 per day — comfortable.
+--- end ---
+
+Using those answers, give the user one clear final response.
+```
+
+That is the whole difference between the modes. One rule holds across all of
+them: **the agent you chat with always writes the final answer.**
+
+## 0.5 Where everything lives
+
+```mermaid
+flowchart TB
+    subgraph browser["Browser"]
+        FE["React canvas, chat, trace viewer"]
+    end
+    subgraph other["Auth service (separate project)"]
+        AUTH["Login → issues a signed token"]
+    end
+    subgraph here["This service"]
+        R["routers/ — the HTTP endpoints"]
+        O["services/orchestrator.py — runs agents"]
+        TB["services/tool_builder.py — builds tools"]
+        TR["services/tracing.py — records steps"]
+        DB[("SQLite — everything, for 48 hours")]
+    end
+    subgraph out["Outside"]
+        AI["OpenAI · Groq · Anthropic · Gemini"]
+        EXT["Slack · GitHub · Tavily · your APIs"]
+        VEC[("Pinecone — document search")]
+    end
+    FE --> AUTH
+    FE --> R --> O
+    O --> TB --> EXT
+    O --> AI
+    TB --> VEC
+    O --> TR --> DB
+    R --> DB
+```
+
+Two facts that surprise people:
+
+- **This service has no users table and no login.** The separate auth backend
+  issues a signed token; this service verifies the signature and trusts the user
+  id inside it. Every database query then filters on that id — that *is* the
+  security model.
+- **Everything is deleted after 48 hours.** Agents, tools, documents, chat
+  history, traces, and your API keys. Not a limitation to work around, but a
+  design decision the whole system is shaped by — which is why there is an Export
+  button.
+
+---
+
+# Part 1 — The code
+
+Now that you know what the pieces are, here is how each one is built.
 
 ## 1. How to read a run
 
@@ -1215,6 +1494,21 @@ stop the sweep.
 ## 11. Questions you should be able to answer
 
 Use these to check yourself.
+
+**Explaining the project to someone new**
+
+| Question | The answer, in one line |
+|---|---|
+| What is this project? | A canvas where you build a team of AI agents, connect them, and chat with one — it consults the others and shows you every step it took — §0.1 |
+| Why not just use one AI? | One prompt trying to do several jobs does each poorly, and you cannot see which part went wrong — §0.1 |
+| What is an "agent" here, concretely? | A database row: a name, instructions, a provider and model, and a list of attached tools — §0.3 |
+| What does connecting two agents do? | It makes each available to the other as a tool called `ask_<name>` — §0.3 |
+| What does an agent actually do when asked something? | It loops: model reads everything, asks for a tool, tool runs, repeat — until it asks for no tool, and that text is the answer — §0.4 |
+| What is an orchestration mode? | Whether the AI decides which connected agents to consult, or the code runs them in a fixed way — §0.4 |
+| Who writes the final answer? | Always the agent you chatted with, in every mode — §0.4 |
+| Where is the login and user database? | In a separate service. This one verifies a signed token and filters every query by the user id inside it — §0.5, §3 |
+
+**Explaining the code**
 
 | Question | Where the answer is |
 |---|---|
