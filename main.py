@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db, cleanup_expired_data
-from routers import agents, tools, rag, execute, settings as settings_router
+from routers import agents, tools, rag, execute, settings as settings_router, examples
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,6 +78,7 @@ app.include_router(tools.router)
 app.include_router(rag.router)
 app.include_router(execute.router)
 app.include_router(settings_router.router)
+app.include_router(examples.router)
 
 
 @app.get("/health")
