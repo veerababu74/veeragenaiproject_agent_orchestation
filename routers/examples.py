@@ -25,6 +25,17 @@ from services.llm_provider import PROVIDER_MODELS
 router = APIRouter(prefix='/examples', tags=['examples'])
 
 
+def _wipe(conn, user_id):
+    """Empty a user's workspace. Children first, because connections and tool
+    assignments reference the agent rows they would otherwise orphan."""
+    conn.execute('DELETE FROM agent_connections WHERE user_id=?', (user_id,))
+    conn.execute(
+        """DELETE FROM tool_assignments WHERE agent_id IN
+           (SELECT id FROM agents WHERE user_id=?)""", (user_id,))
+    conn.execute('DELETE FROM agents WHERE user_id=?', (user_id,))
+    conn.execute('DELETE FROM tools WHERE user_id=?', (user_id,))
+
+
 class LoadExampleRequest(BaseModel):
     provider: str = Field(default='openai', max_length=40)
     model: str = Field(default='', max_length=120)
@@ -66,6 +77,25 @@ async def get_example(example_id: str):
     return {**summary(example), 'graph': example['graph']}
 
 
+@router.post('/clear')
+async def clear_workspace(user_id: str = Depends(current_user_id)):
+    """Remove every agent, connection and tool this user has.
+
+    Exposed separately from the replace flag because wanting an empty canvas is
+    not the same as wanting a different example, and making someone load one in
+    order to clear the last is a silly way to spend a click.
+    """
+    conn = get_db()
+    try:
+        removed = conn.execute(
+            'SELECT COUNT(*) AS n FROM agents WHERE user_id=?', (user_id,)).fetchone()['n']
+        _wipe(conn, user_id)
+        conn.commit()
+    finally:
+        conn.close()
+    return {'cleared': True, 'agents_removed': removed}
+
+
 @router.post('/{example_id}/load')
 async def load_example(example_id: str, request: LoadExampleRequest,
                        user_id: str = Depends(current_user_id)):
@@ -102,13 +132,7 @@ async def load_example(example_id: str, request: LoadExampleRequest,
             (user_id, provider)).fetchone() is not None
 
         if request.replace:
-            # Children first: connections and assignments reference agents.
-            conn.execute('DELETE FROM agent_connections WHERE user_id=?', (user_id,))
-            conn.execute(
-                '''DELETE FROM tool_assignments WHERE agent_id IN
-                   (SELECT id FROM agents WHERE user_id=?)''', (user_id,))
-            conn.execute('DELETE FROM agents WHERE user_id=?', (user_id,))
-            conn.execute('DELETE FROM tools WHERE user_id=?', (user_id,))
+            _wipe(conn, user_id)
             conn.commit()
     finally:
         conn.close()
